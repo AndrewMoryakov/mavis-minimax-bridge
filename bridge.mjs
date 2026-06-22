@@ -44,6 +44,7 @@ function printJson(value) {
 function usage() {
   console.log(`Usage:
   node bridge/bridge.mjs status
+  node bridge/bridge.mjs canary-estimate [--long-prompt <file>]
   node bridge/bridge.mjs canary [--port <port>]
   node bridge/bridge.mjs optimize-check [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>]
   node bridge/bridge.mjs ask --mode review-only --task <file> [--port <port>]
@@ -143,6 +144,55 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutSec = 60) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function readLongPrompt(args) {
+  const longPromptPath = argValue(args, "--long-prompt");
+  if (!longPromptPath) return null;
+  const resolved = path.resolve(longPromptPath);
+  const text = fs.readFileSync(resolved, "utf8");
+  const maxChars = Number(config.maxLongPromptChars || 160000);
+  if (text.length > maxChars) {
+    throw new Error(`long prompt too large: ${text.length} chars > ${maxChars}`);
+  }
+  return { path: resolved, text, chars: text.length };
+}
+
+function canaryPrompts(args) {
+  const prompts = [
+    { label: "ready", text: "Reply exactly: READY" },
+    { label: "pong", text: "Reply exactly: PONG" },
+  ];
+  const longPrompt = readLongPrompt(args);
+  if (longPrompt) {
+    prompts.push({
+      label: "long",
+      path: longPrompt.path,
+      chars: longPrompt.chars,
+      text: `Reply exactly: LONGOK\n\n${longPrompt.text}`,
+    });
+  }
+  return prompts;
+}
+
+function canaryEstimate(args) {
+  const prompts = canaryPrompts(args);
+  const promptChars = prompts.reduce((sum, prompt) => sum + Buffer.byteLength(prompt.text, "utf8"), 0);
+  const tinyInputEstimateTokens = Number(config.tinyCanaryInputEstimateTokens || 12000);
+  const extraPromptTokens = Math.ceil(Math.max(0, promptChars - 40) / 4);
+  return {
+    event: "canary-estimate",
+    turns: prompts.length,
+    promptChars,
+    estimatedInputTokens: tinyInputEstimateTokens + extraPromptTokens,
+    tinyInputEstimateTokens,
+    maxInputTokens: Number(config.maxInputTokens || 200000),
+    longPrompt: prompts.find((prompt) => prompt.label === "long") ? {
+      path: prompts.find((prompt) => prompt.label === "long").path,
+      chars: prompts.find((prompt) => prompt.label === "long").chars,
+    } : null,
+    note: "Estimate only. It includes a conservative tiny-canary overhead and does not send a model request.",
+  };
 }
 
 function summarizeConfig(port, runtimeConfig) {
@@ -304,25 +354,7 @@ async function runCanarySequence(server, args, titlePrefix) {
   if (sessionID && config.denySessions?.includes(sessionID)) {
     throw new Error(`refusing denied session ${sessionID}`);
   }
-  const prompts = [
-    { label: "ready", text: "Reply exactly: READY" },
-    { label: "pong", text: "Reply exactly: PONG" },
-  ];
-  const longPromptPath = argValue(args, "--long-prompt");
-  if (longPromptPath) {
-    const resolved = path.resolve(longPromptPath);
-    const text = fs.readFileSync(resolved, "utf8");
-    const maxChars = Number(config.maxLongPromptChars || 160000);
-    if (text.length > maxChars) {
-      throw new Error(`long prompt too large: ${text.length} chars > ${maxChars}`);
-    }
-    prompts.push({
-      label: "long",
-      path: resolved,
-      chars: text.length,
-      text: `Reply exactly: LONGOK\n\n${text}`,
-    });
-  }
+  const prompts = canaryPrompts(args);
 
   const timeoutSec = Math.min(config.maxWallClockSec || 180, 75);
   const messages = [];
@@ -443,6 +475,12 @@ async function statusCommand() {
   printJson({ servers });
 }
 
+function canaryEstimateCommand(args) {
+  const estimate = canaryEstimate(args);
+  appendJsonl(ledgerPath, estimate);
+  printJson(estimate);
+}
+
 async function canaryCommand(args) {
   const server = await selectServer(args);
   const canary = await runCanarySequence(server, args, "bridge-canary");
@@ -470,6 +508,7 @@ async function optimizeCheckCommand(args) {
     event: "optimize-check",
     id: cryptoRandomID(),
     port: server.port,
+    estimate: args.includes("--skip-canary") ? null : canaryEstimate(args),
     route,
     canary,
     usage,
@@ -606,6 +645,7 @@ async function main() {
   try {
     if (!command || command === "help" || command === "--help") return usage();
     if (command === "status") return await statusCommand();
+    if (command === "canary-estimate") return canaryEstimateCommand(args);
     if (command === "canary") return await canaryCommand(args);
     if (command === "optimize-check") return await optimizeCheckCommand(args);
     if (command === "ask") return await askCommand(args);

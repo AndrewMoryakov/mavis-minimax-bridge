@@ -71,12 +71,14 @@ Verify without spending model tokens:
 
 ```powershell
 node .\bridge.mjs status
+node .\bridge.mjs canary-estimate
 node .\bridge.mjs optimize-check --skip-canary --session mvs_<id>
 ```
 
 Run a tiny canary only after user approval:
 
 ```powershell
+node .\bridge.mjs canary-estimate
 node .\bridge.mjs optimize-check
 ```
 
@@ -99,6 +101,7 @@ Rules for agents:
 
 ```powershell
 node .\bridge.mjs status
+node .\bridge.mjs canary-estimate
 node .\bridge.mjs canary
 node .\bridge.mjs optimize-check
 node .\bridge.mjs optimize-check --session mvs_<id>
@@ -124,6 +127,20 @@ node .\bridge.mjs tail
 `cacheWriteObserved=false` does not automatically fail the verdict. Provider
 cache reporting can remain zero on tiny prompts. Use `--long-prompt <file>`
 only when you intentionally want a cache-write canary.
+
+Estimate token exposure before spending tokens:
+
+```powershell
+node .\bridge.mjs canary-estimate
+node .\bridge.mjs canary-estimate --long-prompt path\to\stable-prefix.txt
+```
+
+Build a realistic local long-prompt file from repository docs/config:
+
+```powershell
+npm run prefix:build
+node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt
+```
 
 ## Safety
 

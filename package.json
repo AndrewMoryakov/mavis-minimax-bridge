@@ -10,6 +10,8 @@
   "scripts": {
     "check": "node --check ./bridge.mjs",
     "init": "node ./scripts/init-runtime.mjs",
+    "canary:estimate": "node ./bridge.mjs canary-estimate",
+    "prefix:build": "node ./scripts/build-stable-prefix.mjs",
     "status": "node ./bridge.mjs status",
     "optimize:check": "node ./bridge.mjs optimize-check --skip-canary"
   },

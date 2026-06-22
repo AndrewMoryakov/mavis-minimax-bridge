@@ -13,11 +13,19 @@ Common commands:
 
 ```powershell
 node .\bridge.mjs status
+node .\bridge.mjs canary-estimate
 node .\bridge.mjs canary
 node .\bridge.mjs optimize-check
 node .\bridge.mjs optimize-check --session mvs_<id>
 node .\bridge.mjs optimize-check --long-prompt .\stable-prefix.txt
 node .\bridge.mjs ask --mode review-only --task .\task.md
+```
+
+Build a realistic local long-prompt file for cache-write canaries:
+
+```powershell
+npm run prefix:build
+node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt
 ```
 
 Safety notes:

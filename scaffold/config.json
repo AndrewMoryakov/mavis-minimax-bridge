@@ -10,6 +10,7 @@
   "maxTurns": 3,
   "maxWallClockSec": 180,
   "maxInputTokens": 200000,
+  "tinyCanaryInputEstimateTokens": 12000,
   "maxLongPromptChars": 160000,
   "asciiConsole": true,
   "denySessions": [],
