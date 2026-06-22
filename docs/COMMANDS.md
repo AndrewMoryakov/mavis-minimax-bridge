@@ -95,13 +95,16 @@ These commands can spend tokens:
 
 ```powershell
 node .\bridge.mjs ask --mode review-only --task .\task.md
+node .\bridge.mjs ask --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 node .\bridge.mjs ask --mode patch-proposal --task .\task.md
 node .\bridge.mjs mvs-send --session mvs_<id> --task .\task.md --yes
 node .\bridge.mjs mvs-send --session mvs_<id> --content "short prompt" --yes
 ```
 
 Prefer `review-only` first. `mvs-send` requires `--yes` because it posts into a
-target Mavis session.
+target Mavis session. Repeated `--task` values on `ask` are sent as follow-up
+turns in one temporary `ses_...` session and each turn is recorded in the local
+ledger/outbox.
 
 ## Logs
 

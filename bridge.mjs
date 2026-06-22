@@ -100,7 +100,7 @@ function usage() {
   node bridge/bridge.mjs canary-estimate [--long-prompt <file>] [--repeat-long <n>]
   node bridge/bridge.mjs canary [--port <port>]
   node bridge/bridge.mjs optimize-check [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
-  node bridge/bridge.mjs ask --mode review-only --task <file> [--port <port>]
+  node bridge/bridge.mjs ask --mode review-only --task <file> [--task <followup-file> ...] [--port <port>]
   node bridge/bridge.mjs mvs-status [--session <mvs-id>] [--daemon-port <port>]
   node bridge/bridge.mjs mvs-peers [--session <mvs-id>] [--daemon-port <port>]
   node bridge/bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
@@ -112,6 +112,14 @@ function usage() {
 function argValue(args, name, fallback = null) {
   const idx = args.indexOf(name);
   return idx >= 0 && idx + 1 < args.length ? args[idx + 1] : fallback;
+}
+
+function argValues(args, name) {
+  const values = [];
+  for (let index = 0; index < args.length - 1; index += 1) {
+    if (args[index] === name) values.push(args[index + 1]);
+  }
+  return values;
 }
 
 function findServeProcesses() {
@@ -821,28 +829,51 @@ async function askCommand(args) {
   if (!["review-only", "patch-proposal"].includes(mode)) {
     throw new Error(`unsupported mode: ${mode}`);
   }
-  const taskPath = argValue(args, "--task");
-  if (!taskPath) throw new Error("--task is required");
-  const task = fs.readFileSync(path.resolve(taskPath), "utf8");
+  const taskPaths = argValues(args, "--task");
+  if (taskPaths.length === 0) throw new Error("--task is required");
+  const tasks = taskPaths.map((taskPath) => ({
+    taskPath: path.resolve(taskPath),
+    text: fs.readFileSync(path.resolve(taskPath), "utf8"),
+  }));
   const server = await selectServer(args);
   const envelope = {
     event: "ask",
     id: cryptoRandomID(),
     mode,
     port: server.port,
-    taskPath: path.resolve(taskPath),
-    chars: task.length,
+    taskPath: tasks[0].taskPath,
+    taskPaths: tasks.map((task) => task.taskPath),
+    turnsRequested: tasks.length,
+    chars: tasks.reduce((sum, task) => sum + task.text.length, 0),
   };
   appendJsonl(inboxPath, envelope);
 
-  const prompt = mode === "review-only"
-    ? `Review only. Do not edit files. Answer concisely.\n\n${task}`
-    : `Propose a unified diff only. Do not apply it.\n\n${task}`;
   const session = await createSession(server.port, `bridge-ask-${Date.now()}`);
-  const result = await sendPrompt(server.port, session.id, prompt, { timeoutSec: config.maxWallClockSec || 180 });
-  const signals = extractSignalsFromMessages([result]);
-  const answer = assistantText(result);
-  const out = { ...envelope, sessionID: session.id, signals, answer: answer.slice(-12000) };
+  const results = [];
+  const turns = [];
+  const timeoutSec = config.maxWallClockSec || 180;
+  for (let index = 0; index < tasks.length; index += 1) {
+    const task = tasks[index];
+    const prompt = mode === "review-only"
+      ? `Review only. Do not edit files. Answer concisely.\n\n${task.text}`
+      : `Propose a unified diff only. Do not apply it.\n\n${task.text}`;
+    const result = await sendPrompt(server.port, session.id, prompt, { timeoutSec });
+    results.push(result);
+    const answer = assistantText(result);
+    turns.push({
+      index: index + 1,
+      taskPath: task.taskPath,
+      chars: task.text.length,
+      ...turnSummary(result),
+      answer: answer.slice(-12000),
+    });
+    const signals = extractSignalsFromMessages(results);
+    if (signals.inputTokens > Number(config.maxInputTokens || 200000)) {
+      break;
+    }
+  }
+  const signals = extractSignalsFromMessages(results);
+  const out = { ...envelope, sessionID: session.id, signals, turns, answer: turns.at(-1)?.answer || "" };
   appendJsonl(ledgerPath, out);
   appendJsonl(outboxPath, out);
   printJson(out);

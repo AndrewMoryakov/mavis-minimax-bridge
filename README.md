@@ -89,8 +89,13 @@ Use for collaboration:
 
 ```powershell
 node .\bridge.mjs ask --mode review-only --task .\task.md
+node .\bridge.mjs ask --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 node .\bridge.mjs mvs-send --session mvs_<id> --task .\task.md --yes
 ```
+
+Repeated `--task` values are sent as follow-up turns in one temporary
+`ses_...` session. Use this for guided reviews where MiniMax needs a few compact
+questions to discover problems.
 
 Rules for agents:
 
@@ -122,6 +127,7 @@ node .\bridge.mjs optimize-check
 node .\bridge.mjs optimize-check --session mvs_<id>
 node .\bridge.mjs optimize-check --long-prompt path\to\stable-prefix.txt
 node .\bridge.mjs ask --mode review-only --task path\to\task.md
+node .\bridge.mjs ask --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 node .\bridge.mjs mvs-status --session mvs_<id>
 node .\bridge.mjs mvs-peers --session mvs_<id>
 node .\bridge.mjs mvs-messages --session mvs_<id> --limit 5
