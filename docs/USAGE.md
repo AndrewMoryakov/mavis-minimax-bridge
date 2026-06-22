@@ -1,10 +1,13 @@
 # Usage
 
-Copy the example config if you need local overrides:
+Initialize local runtime files:
 
 ```powershell
-Copy-Item .\examples\config.example.json .\config.json
+npm run init
 ```
+
+This creates ignored local files: `config.json`, `ledger.jsonl`, `inbox.jsonl`,
+and `outbox.jsonl`.
 
 Common commands:
 

@@ -20,12 +20,21 @@ Clone the repository, then optionally create a local config:
 ```powershell
 git clone https://github.com/AndrewMoryakov/mavis-minimax-bridge.git
 cd mavis-minimax-bridge
-Copy-Item .\examples\config.example.json .\config.json
+npm run init
 node .\bridge.mjs status
 ```
 
-`config.json` is ignored by git. Keep local session ids, paths, and deny-lists
-there.
+This creates the local runtime skeleton:
+
+```text
+config.json
+ledger.jsonl
+inbox.jsonl
+outbox.jsonl
+```
+
+These files are ignored by git. Keep local session ids, paths, deny-lists, and
+coordination history there.
 
 ## Commands
 
@@ -66,6 +75,9 @@ only when you intentionally want a cache-write canary.
   are ignored by git.
 - stdout escapes non-ASCII by default for legacy Windows admin consoles, while
   JSONL files are written as UTF-8.
+
+See [docs/RUNTIME_FILES.md](docs/RUNTIME_FILES.md) for the runtime file
+contract.
 
 ## Related
 

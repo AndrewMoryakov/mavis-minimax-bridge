@@ -9,6 +9,7 @@
   },
   "scripts": {
     "check": "node --check ./bridge.mjs",
+    "init": "node ./scripts/init-runtime.mjs",
     "status": "node ./bridge.mjs status",
     "optimize:check": "node ./bridge.mjs optimize-check --skip-canary"
   },

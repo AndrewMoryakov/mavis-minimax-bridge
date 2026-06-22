@@ -1,7 +1,7 @@
-config.json
-ledger.jsonl
-inbox.jsonl
-outbox.jsonl
+/config.json
+/ledger.jsonl
+/inbox.jsonl
+/outbox.jsonl
 *.local.*
 node_modules/
 .env

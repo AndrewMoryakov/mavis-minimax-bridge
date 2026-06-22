@@ -1,0 +1,22 @@
+{
+  "defaultModel": "minimax/MiniMax-M3",
+  "mavisDaemonPort": 15321,
+  "currentMavisSession": null,
+  "mavisCli": null,
+  "sessionDirectory": null,
+  "mvsMaxSendChars": 4000,
+  "requireProvider": "minimax",
+  "requireModel": "minimax/MiniMax-M3",
+  "maxTurns": 3,
+  "maxWallClockSec": 180,
+  "maxInputTokens": 200000,
+  "maxLongPromptChars": 160000,
+  "asciiConsole": true,
+  "denySessions": [],
+  "env": {
+    "MAVIS_PROMPT_CACHE_MODE": "enforce",
+    "MAVIS_CONTEXT_BUDGET_MODE": "enforce",
+    "MAVIS_CONTEXT_BUDGET_PROFILE": "max",
+    "MAVIS_PROMPT_CACHE_OPENROUTER": ""
+  }
+}
