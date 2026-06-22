@@ -121,6 +121,8 @@ node .\bridge.mjs deny-session add --session mvs_<id>
 node .\bridge.mjs deny-session remove --session mvs_<id>
 node .\bridge.mjs token-stats --ledger
 node .\bridge.mjs token-stats --session mvs_<id>
+node .\bridge.mjs audit
+node .\bridge.mjs audit --session mvs_<id>
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs canary
 node .\bridge.mjs optimize-check
@@ -134,6 +136,12 @@ node .\bridge.mjs mvs-messages --session mvs_<id> --limit 5
 node .\bridge.mjs mvs-send --session mvs_<id> --task path\to\task.md --yes
 node .\bridge.mjs tail
 ```
+
+`audit` is local-only: it reads the bridge ledger, recent MiniMax plugin logs,
+OpenCode routing, and optional `mavis usage session` data. It does not send a
+model request. Direct MiniMax prompt-cache savings are reported as unproven
+unless an A/B run shows that disabling the prompt-cache patch reduces
+`cacheRead`.
 
 ## State And Modes
 

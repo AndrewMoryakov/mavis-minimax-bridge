@@ -97,6 +97,7 @@ function usage() {
   node bridge/bridge.mjs session show|set|clear [--session <mvs-id>]
   node bridge/bridge.mjs deny-session list|add|remove --session <id>
   node bridge/bridge.mjs token-stats [--session <mvs-id>] [--ledger] [--lines <n>]
+  node bridge/bridge.mjs audit [--session <mvs-id>] [--lines <n>] [--plugin-lines <n>]
   node bridge/bridge.mjs canary-estimate [--long-prompt <file>] [--repeat-long <n>]
   node bridge/bridge.mjs canary [--port <port>]
   node bridge/bridge.mjs optimize-check [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
@@ -407,6 +408,67 @@ function turnSummary(result) {
   };
 }
 
+function roleModelMapFromRouting(routing = {}) {
+  return {
+    main: routing.model || requiredModel(),
+    small: routing.small_model || null,
+    plan: routing.plan || null,
+    build: routing.build || null,
+    general: routing.general || null,
+    explore: routing.explore || null,
+  };
+}
+
+function parseModelRef(providerID, modelID) {
+  if (providerID && modelID) return `${providerID}/${modelID}`;
+  if (modelID && String(modelID).includes("/")) return String(modelID);
+  return modelID || null;
+}
+
+function providerFromModel(model) {
+  if (!model) return null;
+  return String(model).split("/")[0] || null;
+}
+
+function modelIDFromModel(model) {
+  if (!model) return null;
+  const parts = String(model).split("/");
+  return parts.length > 1 ? parts.slice(1).join("/") : parts[0];
+}
+
+function roleForModel(model, routing = {}) {
+  const entries = Object.entries(roleModelMapFromRouting(routing));
+  const exact = entries.find(([, value]) => value && value === model);
+  if (exact) return exact[0];
+  const modelID = modelIDFromModel(model);
+  const sameID = entries.find(([, value]) => value && modelIDFromModel(value) === modelID);
+  return sameID ? sameID[0] : "unknown";
+}
+
+function normalizedTurnEntry(turn, routing = {}, fallback = {}) {
+  const model = parseModelRef(turn.providerID, turn.modelID) || fallback.model || null;
+  const provider = turn.providerID || providerFromModel(model) || fallback.provider || null;
+  return {
+    provider,
+    role: fallback.role || roleForModel(model, routing),
+    model,
+    inputTokens: Number(turn.inputTokens || 0),
+    outputTokens: Number(turn.outputTokens || 0),
+    cacheRead: Number(turn.cacheRead || 0),
+    cacheWrite: Number(turn.cacheWrite || 0),
+    bodyBytes: Number(turn.bodyBytes || 0),
+  };
+}
+
+function normalizedEntriesFromResult(result, routing = {}) {
+  const turns = Array.isArray(result?.turns)
+    ? result.turns
+    : Array.isArray(result?.canary?.turns)
+      ? result.canary.turns
+      : [];
+  return turns.map((turn) => normalizedTurnEntry(turn, routing, { role: "main" }));
+}
+
 function extractSignalsFromMessages(messages) {
   const assistant = messages
     .map((message) => message?.info)
@@ -654,6 +716,189 @@ function summarizeLedgerStats(events) {
   };
 }
 
+function aggregateEntries(entries) {
+  const groups = new Map();
+  for (const entry of entries) {
+    const key = [entry.provider || "unknown", entry.role || "unknown", entry.model || "unknown"].join("|");
+    if (!groups.has(key)) {
+      groups.set(key, {
+        provider: entry.provider || "unknown",
+        role: entry.role || "unknown",
+        model: entry.model || "unknown",
+        requests: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        maxBodyBytes: 0,
+      });
+    }
+    const group = groups.get(key);
+    group.requests += 1;
+    group.inputTokens += Number(entry.inputTokens || 0);
+    group.outputTokens += Number(entry.outputTokens || 0);
+    group.cacheRead += Number(entry.cacheRead || 0);
+    group.cacheWrite += Number(entry.cacheWrite || 0);
+    group.maxBodyBytes = Math.max(group.maxBodyBytes, Number(entry.bodyBytes || 0));
+  }
+  return [...groups.values()].sort((a, b) =>
+    a.provider.localeCompare(b.provider) || a.role.localeCompare(b.role) || a.model.localeCompare(b.model)
+  );
+}
+
+function latestPluginLogPaths(maxFiles = 3) {
+  const logsDir = path.join(os.homedir(), ".mavis", "logs");
+  try {
+    return fs.readdirSync(logsDir)
+      .filter((name) => /^plugin-.*\.log$/i.test(name))
+      .map((name) => path.join(logsDir, name))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
+      .slice(0, maxFiles);
+  } catch (_) {
+    return [];
+  }
+}
+
+function parsePluginLogLine(line) {
+  const match = line.match(/\]\s+\w+\s+\[opencode-plugin\]\s+([a-zA-Z0-9_-]+)\s+(\{.*\})\s*$/);
+  if (!match) return null;
+  const parsed = readJsonFromString(match[2], null);
+  return parsed ? { event: match[1], ...parsed } : null;
+}
+
+function readPluginLogEvents(lineLimit = 500) {
+  const paths = latestPluginLogPaths(3);
+  const lines = [];
+  for (const filePath of paths.reverse()) {
+    const content = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
+    lines.push(...content.slice(-lineLimit));
+  }
+  return lines.slice(-lineLimit).map(parsePluginLogLine).filter(Boolean);
+}
+
+function pluginRequestEntries(events, routing = {}) {
+  return events
+    .filter((event) => event.event === "model_stream_request_start" || event.event === "model_stream_request_summary")
+    .map((event) => {
+      const provider = event.url?.includes("openrouter.ai") ? "openrouter" : event.url?.includes("agent.minimax.io") ? "minimax" : providerFromModel(event.model);
+      const model = provider === "openrouter"
+        ? `openrouter/${event.model || "unknown"}`
+        : provider === "minimax"
+          ? `minimax/${event.model || "unknown"}`
+          : event.model || null;
+      return {
+        provider,
+        role: roleForModel(model, routing),
+        model,
+        bodyBytes: Number(event.bodyBytes || 0),
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        messageBytes: Number(event.sectionBytes?.messages || 0),
+        toolBytes: Number(event.sectionBytes?.tools || 0),
+      };
+    });
+}
+
+function promptCacheLogSummary(events) {
+  const patched = events.filter((event) => event.event === "prompt_cache_enforce_patched");
+  const latest = patched[patched.length - 1] || null;
+  return {
+    enforcePatchedEvents: patched.length,
+    latest: latest ? {
+      sessionId: latest.sessionId || null,
+      breakpointsAdded: latest.breakpointsAdded || 0,
+      maxTokensBefore: latest.details?.maxTokensBefore || null,
+      maxTokensAfter: latest.details?.maxTokensAfter || null,
+      toolDescriptionBytesBefore: latest.details?.toolDescriptionBytesBefore || null,
+      toolDescriptionBytesAfter: latest.details?.toolDescriptionBytesAfter || null,
+    } : null,
+    directMiniMaxCacheVerdict: "unproven: MiniMax direct cache reads may exist, but cacheWrite stays 0 and the source of cacheRead is not isolated",
+  };
+}
+
+function auditVerdict({ route, ledgerEntries, pluginEntries, promptCache }) {
+  const byProvider = aggregateEntries([...ledgerEntries, ...pluginEntries]);
+  const openrouterMaxBody = Math.max(0, ...pluginEntries.filter((entry) => entry.provider === "openrouter").map((entry) => entry.bodyBytes || 0));
+  const directMaxBody = Math.max(0, ...pluginEntries.filter((entry) => entry.provider === "minimax").map((entry) => entry.bodyBytes || 0));
+  const cacheRead = ledgerEntries.reduce((sum, entry) => sum + Number(entry.cacheRead || 0), 0);
+  const cacheWrite = ledgerEntries.reduce((sum, entry) => sum + Number(entry.cacheWrite || 0), 0);
+  const risks = [];
+  if (!route.mainDirectM3) risks.push("P0 main route is not direct minimax/MiniMax-M3");
+  if (!route.nonMainOpenRouter) risks.push("P1 not all non-main roles are routed through OpenRouter as expected");
+  if (openrouterMaxBody > 80000) risks.push(`P0 OpenRouter request body reached ${openrouterMaxBody} bytes; non-main lifecycle traffic can still grow large`);
+  if (directMaxBody > Number(config.maxInputTokens || 200000)) risks.push(`P1 direct MiniMax request body reached ${directMaxBody} bytes`);
+  if (promptCache.enforcePatchedEvents > 0 && cacheWrite === 0) risks.push("P1 prompt-cache patch is active, but MiniMax direct cacheWrite remains 0; savings are unproven");
+  if (cacheRead > 0 && cacheWrite === 0) risks.push("P1 cacheRead exists without cacheWrite; run A/B before relying on direct MiniMax cache");
+  return {
+    ok: risks.length === 0,
+    mainDirectM3: route.mainDirectM3,
+    nonMainOpenRouter: route.nonMainOpenRouter,
+    cacheReadObserved: cacheRead > 0,
+    cacheWriteObserved: cacheWrite > 0,
+    openrouterMaxBodyBytes: openrouterMaxBody,
+    directMaxBodyBytes: directMaxBody,
+    byProviderRoleModel: byProvider,
+    risks,
+  };
+}
+
+async function auditCommand(args) {
+  const lines = Number(argValue(args, "--lines", "500"));
+  const pluginLines = Number(argValue(args, "--plugin-lines", "800"));
+  const sessionID = argValue(args, "--session", null);
+  const servers = await liveServers();
+  const selected = servers.find((server) => server.config?.model === requiredModel()) || servers[0] || null;
+  const routing = selected?.config || {};
+  const route = routingVerdict({ config: routing });
+  const ledgerEvents = readJsonl(ledgerPath, lines);
+  const ledgerEntries = ledgerEvents.flatMap((event) => {
+    if (Array.isArray(event.entries)) return event.entries;
+    return normalizedEntriesFromResult(event, routing);
+  });
+  const pluginEvents = readPluginLogEvents(pluginLines);
+  const pluginEntries = pluginRequestEntries(pluginEvents, routing);
+  const promptCache = promptCacheLogSummary(pluginEvents);
+  const usage = sessionID ? readUsage(sessionID) : { skipped: true, reason: "no --session provided" };
+  const verdict = auditVerdict({ route, ledgerEntries, pluginEntries, promptCache });
+  const out = {
+    event: "audit",
+    generatedAt: now(),
+    routing,
+    bridgeConfig: publicConfigSummary(),
+    usage,
+    ledger: {
+      source: ledgerPath,
+      eventsRead: ledgerEvents.length,
+      entries: aggregateEntries(ledgerEntries),
+    },
+    pluginLogs: {
+      files: latestPluginLogPaths(3),
+      eventsRead: pluginEvents.length,
+      requests: aggregateEntries(pluginEntries),
+      promptCache,
+    },
+    verdict,
+    notes: [
+      "Direct MiniMax cache is treated as unproven until A/B confirms the prompt-cache patch changes cacheRead behavior.",
+      "OpenRouter prompt-cache mutation is off unless MAVIS_PROMPT_CACHE_OPENROUTER=1.",
+      "bodyBytes are request-size evidence, not provider billing tokens.",
+    ],
+  };
+  appendJsonl(ledgerPath, {
+    event: "audit",
+    provider: "mixed",
+    role: "audit",
+    model: "mixed",
+    sessionID,
+    risks: verdict.risks,
+    openrouterMaxBodyBytes: verdict.openrouterMaxBodyBytes,
+    directMaxBodyBytes: verdict.directMaxBodyBytes,
+  });
+  printJson(out);
+}
+
 async function statusCommand() {
   const servers = await liveServers();
   appendJsonl(ledgerPath, { event: "status", servers });
@@ -791,7 +1036,11 @@ async function canaryCommand(args) {
   const canary = await runCanarySequence(server, args, "bridge-canary");
   const result = {
     event: "canary",
+    provider: "minimax",
+    role: "main",
+    model: requiredModel(),
     port: server.port,
+    entries: normalizedEntriesFromResult(canary, server.config),
     ...canary,
   };
   appendJsonl(ledgerPath, result);
@@ -812,10 +1061,14 @@ async function optimizeCheckCommand(args) {
   const result = {
     event: "optimize-check",
     id: cryptoRandomID(),
+    provider: "mixed",
+    role: "optimize-check",
+    model: "mixed",
     port: server.port,
     estimate: args.includes("--skip-canary") ? null : canaryEstimate(args),
     route,
     canary,
+    entries: canary ? normalizedEntriesFromResult(canary, server.config) : [],
     usage,
     verdict,
   };
@@ -874,6 +1127,10 @@ async function askCommand(args) {
   }
   const signals = extractSignalsFromMessages(results);
   const out = { ...envelope, sessionID: session.id, signals, turns, answer: turns.at(-1)?.answer || "" };
+  out.provider = turns.length > 0 ? turns[0].providerID || "minimax" : "minimax";
+  out.role = "main";
+  out.model = turns.length > 0 ? parseModelRef(turns[0].providerID, turns[0].modelID) || requiredModel() : requiredModel();
+  out.entries = turns.map((turn) => normalizedTurnEntry(turn, server.config, { role: "main" }));
   appendJsonl(ledgerPath, out);
   appendJsonl(outboxPath, out);
   printJson(out);
@@ -979,6 +1236,7 @@ async function main() {
     if (command === "session") return sessionCommand(args);
     if (command === "deny-session") return denySessionCommand(args);
     if (command === "token-stats") return tokenStatsCommand(args);
+    if (command === "audit") return await auditCommand(args);
     if (command === "canary-estimate") return canaryEstimateCommand(args);
     if (command === "canary") return await canaryCommand(args);
     if (command === "optimize-check") return await optimizeCheckCommand(args);

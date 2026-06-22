@@ -16,6 +16,7 @@
     "state": "node ./bridge.mjs state",
     "mode": "node ./bridge.mjs mode list",
     "tokens": "node ./bridge.mjs token-stats --ledger",
+    "audit": "node ./bridge.mjs audit",
     "optimize:check": "node ./bridge.mjs optimize-check --skip-canary"
   },
   "keywords": [

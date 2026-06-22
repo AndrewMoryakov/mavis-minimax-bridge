@@ -69,10 +69,19 @@ Use the deny-list for burned, orchestration, or expensive sessions.
 node .\bridge.mjs token-stats --ledger
 node .\bridge.mjs token-stats --session mvs_<id>
 node .\bridge.mjs token-stats --session mvs_<id> --ledger
+node .\bridge.mjs audit
+node .\bridge.mjs audit --session mvs_<id>
+node .\bridge.mjs audit --lines 500 --plugin-lines 800
 ```
 
 - `--ledger`: summarize local bridge canary / optimize-check history.
 - `--session`: query `mavis usage session mvs_<id> --json`.
+
+`audit` is local-only. It joins bridge JSONL events, recent `plugin-*.log`
+request summaries, current OpenCode routing, prompt-cache patch logs, and
+optional `mavis usage` data. It reports provider/role/model groups and flags
+risks such as growing OpenRouter request bodies or direct MiniMax cache savings
+that are not proven by A/B data.
 
 ## Canary And Optimization Checks
 
