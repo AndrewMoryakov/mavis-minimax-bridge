@@ -13,6 +13,9 @@
     "canary:estimate": "node ./bridge.mjs canary-estimate",
     "prefix:build": "node ./scripts/build-stable-prefix.mjs",
     "status": "node ./bridge.mjs status",
+    "state": "node ./bridge.mjs state",
+    "mode": "node ./bridge.mjs mode list",
+    "tokens": "node ./bridge.mjs token-stats --ledger",
     "optimize:check": "node ./bridge.mjs optimize-check --skip-canary"
   },
   "keywords": [

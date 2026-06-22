@@ -10,6 +10,33 @@ const inboxPath = path.join(bridgeDir, "inbox.jsonl");
 const outboxPath = path.join(bridgeDir, "outbox.jsonl");
 const ledgerPath = path.join(bridgeDir, "ledger.jsonl");
 
+function defaultConfig() {
+  return {
+    defaultModel: "minimax/MiniMax-M3",
+    mavisDaemonPort: 15321,
+    currentMavisSession: null,
+    mavisCli: null,
+    sessionDirectory: null,
+    mvsMaxSendChars: 4000,
+    requireProvider: "minimax",
+    requireModel: "minimax/MiniMax-M3",
+    maxTurns: 3,
+    maxWallClockSec: 180,
+    maxInputTokens: 200000,
+    tinyCanaryInputEstimateTokens: 12000,
+    maxLongPromptChars: 160000,
+    maxLongPromptRepeats: 3,
+    asciiConsole: true,
+    denySessions: [],
+    env: {
+      MAVIS_PROMPT_CACHE_MODE: "enforce",
+      MAVIS_CONTEXT_BUDGET_MODE: "enforce",
+      MAVIS_CONTEXT_BUDGET_PROFILE: "max",
+      MAVIS_PROMPT_CACHE_OPENROUTER: "",
+    },
+  };
+}
+
 function readJson(filePath, fallback) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -18,7 +45,25 @@ function readJson(filePath, fallback) {
   }
 }
 
-const config = readJson(configPath, {});
+const config = { ...defaultConfig(), ...readJson(configPath, {}) };
+config.env = { ...defaultConfig().env, ...(config.env || {}) };
+config.denySessions = Array.isArray(config.denySessions) ? config.denySessions : [];
+
+function stableStringify(value) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function writeConfig(next, reason = "config-write") {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const merged = { ...defaultConfig(), ...next };
+  merged.env = { ...defaultConfig().env, ...(next.env || {}) };
+  merged.denySessions = Array.isArray(merged.denySessions) ? [...new Set(merged.denySessions)] : [];
+  fs.writeFileSync(configPath, stableStringify(merged), "utf8");
+  Object.keys(config).forEach((key) => delete config[key]);
+  Object.assign(config, merged);
+  appendJsonl(ledgerPath, { event: "config-updated", reason, changedKeys: Object.keys(next).sort() });
+  return merged;
+}
 
 function now() {
   return new Date().toISOString();
@@ -44,6 +89,14 @@ function printJson(value) {
 function usage() {
   console.log(`Usage:
   node bridge/bridge.mjs status
+  node bridge/bridge.mjs state
+  node bridge/bridge.mjs config show
+  node bridge/bridge.mjs config set --key <name|env.NAME> --value <json|string>
+  node bridge/bridge.mjs mode list
+  node bridge/bridge.mjs mode set [--profile max|medium|free] [--prompt-cache enforce|observe|off] [--context-budget enforce|observe|off]
+  node bridge/bridge.mjs session show|set|clear [--session <mvs-id>]
+  node bridge/bridge.mjs deny-session list|add|remove --session <id>
+  node bridge/bridge.mjs token-stats [--session <mvs-id>] [--ledger] [--lines <n>]
   node bridge/bridge.mjs canary-estimate [--long-prompt <file>] [--repeat-long <n>]
   node bridge/bridge.mjs canary [--port <port>]
   node bridge/bridge.mjs optimize-check [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
@@ -483,10 +536,240 @@ function extractSignals(text) {
   };
 }
 
+function runtimeFileInfo(filePath) {
+  if (!fs.existsSync(filePath)) return { path: filePath, exists: false };
+  const stats = fs.statSync(filePath);
+  return {
+    path: filePath,
+    exists: true,
+    sizeBytes: stats.size,
+    modified: stats.mtime.toISOString(),
+  };
+}
+
+function readJsonl(filePath, limit = 50) {
+  if (!fs.existsSync(filePath)) return [];
+  const text = fs.readFileSync(filePath, "utf8").trim();
+  if (!text) return [];
+  return text.split(/\r?\n/)
+    .slice(-limit)
+    .map((line) => readJsonFromString(line, null))
+    .filter(Boolean);
+}
+
+function modeState() {
+  return {
+    profile: config.env?.MAVIS_CONTEXT_BUDGET_PROFILE || "max",
+    promptCacheMode: config.env?.MAVIS_PROMPT_CACHE_MODE || "enforce",
+    contextBudgetMode: config.env?.MAVIS_CONTEXT_BUDGET_MODE || "enforce",
+    promptCacheOpenRouter: config.env?.MAVIS_PROMPT_CACHE_OPENROUTER || "",
+    modes: {
+      profile: ["max", "medium", "free"],
+      promptCacheMode: ["enforce", "observe", "off"],
+      contextBudgetMode: ["enforce", "observe", "off"],
+    },
+  };
+}
+
+function publicConfigSummary() {
+  return {
+    configPath,
+    hasConfigFile: fs.existsSync(configPath),
+    defaultModel: config.defaultModel,
+    requireModel: requiredModel(),
+    mavisDaemonPort: config.mavisDaemonPort,
+    sessionDirectory: sessionDirectory(),
+    currentMavisSession: config.currentMavisSession || null,
+    mvsMaxSendChars: config.mvsMaxSendChars,
+    maxWallClockSec: config.maxWallClockSec,
+    maxInputTokens: config.maxInputTokens,
+    tinyCanaryInputEstimateTokens: config.tinyCanaryInputEstimateTokens,
+    maxLongPromptChars: config.maxLongPromptChars,
+    maxLongPromptRepeats: config.maxLongPromptRepeats,
+    asciiConsole: config.asciiConsole,
+    denySessionsCount: config.denySessions.length,
+    mode: modeState(),
+  };
+}
+
+function parseConfigValue(value) {
+  if (value === null || value === undefined) throw new Error("--value is required");
+  const text = String(value);
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return text;
+  }
+}
+
+function setConfigKey(key, value) {
+  if (!key) throw new Error("--key is required");
+  const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };
+  if (key.startsWith("env.")) {
+    const envKey = key.slice("env.".length);
+    if (!envKey) throw new Error("env key is empty");
+    next.env[envKey] = value;
+  } else {
+    next[key] = value;
+  }
+  return writeConfig(next, `config set ${key}`);
+}
+
+function summarizeLedgerStats(events) {
+  const relevant = events.filter((event) => ["canary", "optimize-check"].includes(event.event));
+  const totals = {
+    events: relevant.length,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+  };
+  const latest = relevant[relevant.length - 1] || null;
+  for (const event of relevant) {
+    const signals = event.signals || event.canary?.signals || {};
+    totals.inputTokens += Number(signals.inputTokens || 0);
+    totals.outputTokens += Number(signals.outputTokens || 0);
+    totals.cacheRead += Number(signals.cacheRead || 0);
+    totals.cacheWrite += Number(signals.cacheWrite || 0);
+  }
+  return {
+    source: ledgerPath,
+    totals,
+    latest: latest ? {
+      ts: latest.ts || null,
+      event: latest.event,
+      id: latest.id || null,
+      sessionID: latest.sessionID || latest.canary?.sessionID || null,
+      verdict: latest.verdict || null,
+      signals: latest.signals || latest.canary?.signals || null,
+    } : null,
+  };
+}
+
 async function statusCommand() {
   const servers = await liveServers();
   appendJsonl(ledgerPath, { event: "status", servers });
   printJson({ servers });
+}
+
+async function stateCommand() {
+  const servers = await liveServers();
+  const events = readJsonl(ledgerPath, 20);
+  const out = {
+    event: "state",
+    serverCount: servers.length,
+    servers,
+    config: publicConfigSummary(),
+    runtimeFiles: {
+      config: runtimeFileInfo(configPath),
+      ledger: runtimeFileInfo(ledgerPath),
+      inbox: runtimeFileInfo(inboxPath),
+      outbox: runtimeFileInfo(outboxPath),
+    },
+    latestLedgerEvents: events.slice(-5).map((event) => ({
+      ts: event.ts || null,
+      event: event.event || null,
+      id: event.id || null,
+      sessionID: event.sessionID || event.canary?.sessionID || null,
+    })),
+  };
+  appendJsonl(ledgerPath, { event: "state", serverCount: servers.length });
+  printJson(out);
+}
+
+function configCommand(args) {
+  const [sub] = args;
+  if (!sub || sub === "show") {
+    return printJson({ event: "config", config: publicConfigSummary(), raw: config });
+  }
+  if (sub === "set") {
+    const key = argValue(args, "--key");
+    const value = parseConfigValue(argValue(args, "--value"));
+    const next = setConfigKey(key, value);
+    return printJson({ event: "config-updated", key, value, config: publicConfigSummary(), raw: next });
+  }
+  throw new Error(`unknown config command: ${sub}`);
+}
+
+function modeCommand(args) {
+  const [sub] = args;
+  if (!sub || sub === "list" || sub === "show") {
+    return printJson({ event: "mode", ...modeState() });
+  }
+  if (sub !== "set") throw new Error(`unknown mode command: ${sub}`);
+  const profile = argValue(args, "--profile");
+  const promptCache = argValue(args, "--prompt-cache");
+  const contextBudget = argValue(args, "--context-budget");
+  const allowedProfile = new Set(["max", "medium", "free"]);
+  const allowedMode = new Set(["enforce", "observe", "off"]);
+  const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };
+  if (profile) {
+    if (!allowedProfile.has(profile)) throw new Error(`unsupported profile: ${profile}`);
+    next.env.MAVIS_CONTEXT_BUDGET_PROFILE = profile;
+  }
+  if (promptCache) {
+    if (!allowedMode.has(promptCache)) throw new Error(`unsupported prompt-cache mode: ${promptCache}`);
+    next.env.MAVIS_PROMPT_CACHE_MODE = promptCache;
+  }
+  if (contextBudget) {
+    if (!allowedMode.has(contextBudget)) throw new Error(`unsupported context-budget mode: ${contextBudget}`);
+    next.env.MAVIS_CONTEXT_BUDGET_MODE = contextBudget;
+  }
+  if (!profile && !promptCache && !contextBudget) {
+    throw new Error("mode set requires --profile, --prompt-cache, or --context-budget");
+  }
+  writeConfig(next, "mode set");
+  printJson({ event: "mode-updated", ...modeState() });
+}
+
+function sessionCommand(args) {
+  const [sub] = args;
+  if (!sub || sub === "show") {
+    return printJson({ event: "session", currentMavisSession: config.currentMavisSession || null });
+  }
+  const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };
+  if (sub === "set") {
+    const sessionID = argValue(args, "--session");
+    if (!sessionID || !String(sessionID).startsWith("mvs_")) throw new Error("session set requires --session mvs_<id>");
+    next.currentMavisSession = sessionID;
+  } else if (sub === "clear") {
+    next.currentMavisSession = null;
+  } else {
+    throw new Error(`unknown session command: ${sub}`);
+  }
+  writeConfig(next, `session ${sub}`);
+  printJson({ event: "session-updated", currentMavisSession: config.currentMavisSession || null });
+}
+
+function denySessionCommand(args) {
+  const [sub] = args;
+  if (!sub || sub === "list") {
+    return printJson({ event: "deny-session", denySessions: config.denySessions });
+  }
+  const sessionID = argValue(args, "--session");
+  if (!sessionID) throw new Error(`${sub} requires --session <id>`);
+  const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };
+  if (sub === "add") {
+    next.denySessions = [...new Set([...next.denySessions, sessionID])];
+  } else if (sub === "remove") {
+    next.denySessions = next.denySessions.filter((item) => item !== sessionID);
+  } else {
+    throw new Error(`unknown deny-session command: ${sub}`);
+  }
+  writeConfig(next, `deny-session ${sub}`);
+  printJson({ event: "deny-session-updated", denySessions: config.denySessions });
+}
+
+function tokenStatsCommand(args) {
+  const sessionID = argValue(args, "--session", null);
+  const lines = Number(argValue(args, "--lines", "100"));
+  const out = {
+    event: "token-stats",
+    usage: sessionID ? readUsage(sessionID) : { skipped: true, reason: "no --session provided" },
+    ledger: args.includes("--ledger") || !sessionID ? summarizeLedgerStats(readJsonl(ledgerPath, lines)) : null,
+  };
+  appendJsonl(ledgerPath, { event: "token-stats", sessionID, ledger: Boolean(out.ledger) });
+  printJson(out);
 }
 
 function canaryEstimateCommand(args) {
@@ -659,6 +942,12 @@ async function main() {
   try {
     if (!command || command === "help" || command === "--help") return usage();
     if (command === "status") return await statusCommand();
+    if (command === "state") return await stateCommand();
+    if (command === "config") return configCommand(args);
+    if (command === "mode") return modeCommand(args);
+    if (command === "session") return sessionCommand(args);
+    if (command === "deny-session") return denySessionCommand(args);
+    if (command === "token-stats") return tokenStatsCommand(args);
     if (command === "canary-estimate") return canaryEstimateCommand(args);
     if (command === "canary") return await canaryCommand(args);
     if (command === "optimize-check") return await optimizeCheckCommand(args);

@@ -71,6 +71,9 @@ Verify without spending model tokens:
 
 ```powershell
 node .\bridge.mjs status
+node .\bridge.mjs state
+node .\bridge.mjs mode list
+node .\bridge.mjs token-stats --ledger
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs optimize-check --skip-canary --session mvs_<id>
 ```
@@ -101,6 +104,18 @@ Rules for agents:
 
 ```powershell
 node .\bridge.mjs status
+node .\bridge.mjs state
+node .\bridge.mjs config show
+node .\bridge.mjs mode list
+node .\bridge.mjs mode set --profile max --prompt-cache enforce --context-budget enforce
+node .\bridge.mjs session show
+node .\bridge.mjs session set --session mvs_<id>
+node .\bridge.mjs session clear
+node .\bridge.mjs deny-session list
+node .\bridge.mjs deny-session add --session mvs_<id>
+node .\bridge.mjs deny-session remove --session mvs_<id>
+node .\bridge.mjs token-stats --ledger
+node .\bridge.mjs token-stats --session mvs_<id>
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs canary
 node .\bridge.mjs optimize-check
@@ -113,6 +128,37 @@ node .\bridge.mjs mvs-messages --session mvs_<id> --limit 5
 node .\bridge.mjs mvs-send --session mvs_<id> --task path\to\task.md --yes
 node .\bridge.mjs tail
 ```
+
+## State And Modes
+
+Use these commands before spending tokens:
+
+```powershell
+node .\bridge.mjs state
+node .\bridge.mjs mode list
+node .\bridge.mjs token-stats --ledger
+```
+
+Change local bridge state without hand-editing `config.json`:
+
+```powershell
+node .\bridge.mjs mode set --profile max
+node .\bridge.mjs mode set --prompt-cache enforce --context-budget enforce
+node .\bridge.mjs session set --session mvs_<id>
+node .\bridge.mjs deny-session add --session mvs_<id>
+```
+
+Available profile modes:
+
+- `max`: strongest economy mode.
+- `medium`: balanced mode.
+- `free`: more permissive mode.
+
+Available enforcement modes:
+
+- `enforce`: actively apply configured behavior.
+- `observe`: observe/report only.
+- `off`: disable that behavior.
 
 ## Token Optimizer Check
 
@@ -155,6 +201,9 @@ node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repe
 
 See [docs/RUNTIME_FILES.md](docs/RUNTIME_FILES.md) for the runtime file
 contract.
+
+See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference,
+including status, modes, token statistics, and state-changing commands.
 
 ## Related
 

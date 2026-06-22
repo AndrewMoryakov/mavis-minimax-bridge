@@ -13,6 +13,14 @@ Common commands:
 
 ```powershell
 node .\bridge.mjs status
+node .\bridge.mjs state
+node .\bridge.mjs config show
+node .\bridge.mjs mode list
+node .\bridge.mjs mode set --profile max --prompt-cache enforce --context-budget enforce
+node .\bridge.mjs session set --session mvs_<id>
+node .\bridge.mjs deny-session add --session mvs_<id>
+node .\bridge.mjs token-stats --ledger
+node .\bridge.mjs token-stats --session mvs_<id>
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs canary
 node .\bridge.mjs optimize-check
