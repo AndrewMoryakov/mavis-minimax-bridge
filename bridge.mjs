@@ -839,6 +839,10 @@ function aggregateEntries(entries) {
         cacheRead: 0,
         cacheWrite: 0,
         maxBodyBytes: 0,
+        maxSystemBytes: 0,
+        maxMessageBytes: 0,
+        maxToolBytes: 0,
+        maxBodySessionID: null,
         truncatedTurns: 0,
         nearOutputCapTurns: 0,
         unknownFinishReasonTurns: 0,
@@ -850,7 +854,14 @@ function aggregateEntries(entries) {
     group.outputTokens += Number(entry.outputTokens || 0);
     group.cacheRead += Number(entry.cacheRead || 0);
     group.cacheWrite += Number(entry.cacheWrite || 0);
-    group.maxBodyBytes = Math.max(group.maxBodyBytes, Number(entry.bodyBytes || 0));
+    const bodyBytes = Number(entry.bodyBytes || 0);
+    if (bodyBytes > group.maxBodyBytes) {
+      group.maxBodyBytes = bodyBytes;
+      group.maxBodySessionID = entry.sessionID || null;
+    }
+    group.maxSystemBytes = Math.max(group.maxSystemBytes, Number(entry.systemBytes || 0));
+    group.maxMessageBytes = Math.max(group.maxMessageBytes, Number(entry.messageBytes || 0));
+    group.maxToolBytes = Math.max(group.maxToolBytes, Number(entry.toolBytes || 0));
     if (entry.truncated) group.truncatedTurns += 1;
     if (entry.nearOutputCap) group.nearOutputCapTurns += 1;
     if ((entry.finishReason || "unknown") === "unknown") group.unknownFinishReasonTurns += 1;
@@ -909,10 +920,28 @@ function pluginRequestEntries(events, routing = {}) {
         outputTokens: 0,
         cacheRead: 0,
         cacheWrite: 0,
+        sessionID: event.sessionId || event.sessionID || null,
         messageBytes: Number(event.sectionBytes?.messages || 0),
+        systemBytes: Number(event.sectionBytes?.system || 0),
         toolBytes: Number(event.sectionBytes?.tools || 0),
       };
     });
+}
+
+function topRequestEntries(entries, limit = 8) {
+  return [...entries]
+    .sort((a, b) => Number(b.bodyBytes || 0) - Number(a.bodyBytes || 0))
+    .slice(0, limit)
+    .map((entry) => ({
+      provider: entry.provider || "unknown",
+      role: entry.role || "unknown",
+      model: entry.model || "unknown",
+      sessionID: entry.sessionID || null,
+      bodyBytes: Number(entry.bodyBytes || 0),
+      systemBytes: Number(entry.systemBytes || 0),
+      messageBytes: Number(entry.messageBytes || 0),
+      toolBytes: Number(entry.toolBytes || 0),
+    }));
 }
 
 function promptCacheLogSummary(events) {
@@ -936,6 +965,8 @@ function auditVerdict({ route, ledgerEntries, pluginEntries, promptCache }) {
   const byProvider = aggregateEntries([...ledgerEntries, ...pluginEntries]);
   const openrouterMaxBody = Math.max(0, ...pluginEntries.filter((entry) => entry.provider === "openrouter").map((entry) => entry.bodyBytes || 0));
   const directMaxBody = Math.max(0, ...pluginEntries.filter((entry) => entry.provider === "minimax").map((entry) => entry.bodyBytes || 0));
+  const openrouterMaxMessageBytes = Math.max(0, ...pluginEntries.filter((entry) => entry.provider === "openrouter").map((entry) => entry.messageBytes || 0));
+  const directMaxMessageBytes = Math.max(0, ...pluginEntries.filter((entry) => entry.provider === "minimax").map((entry) => entry.messageBytes || 0));
   const cacheRead = ledgerEntries.reduce((sum, entry) => sum + Number(entry.cacheRead || 0), 0);
   const cacheWrite = ledgerEntries.reduce((sum, entry) => sum + Number(entry.cacheWrite || 0), 0);
   const truncatedTurns = ledgerEntries.filter((entry) => entry.truncated).length;
@@ -945,7 +976,9 @@ function auditVerdict({ route, ledgerEntries, pluginEntries, promptCache }) {
   if (!route.mainDirectM3) risks.push("P0 main route is not direct minimax/MiniMax-M3");
   if (!route.nonMainOpenRouter) risks.push("P1 not all non-main roles are routed through OpenRouter as expected");
   if (openrouterMaxBody > 80000) risks.push(`P0 OpenRouter request body reached ${openrouterMaxBody} bytes; non-main lifecycle traffic can still grow large`);
+  if (openrouterMaxMessageBytes > 80000) risks.push(`P0 OpenRouter messages section reached ${openrouterMaxMessageBytes} bytes; history compaction is not protecting lifecycle calls`);
   if (directMaxBody > Number(config.maxInputTokens || 200000)) risks.push(`P1 direct MiniMax request body reached ${directMaxBody} bytes`);
+  if (directMaxMessageBytes > Number(config.maxInputTokens || 200000)) risks.push(`P1 direct MiniMax messages section reached ${directMaxMessageBytes} bytes`);
   if (promptCache.enforcePatchedEvents > 0 && cacheWrite === 0) risks.push("P1 prompt-cache patch is active, but MiniMax direct cacheWrite remains 0; savings are unproven");
   if (cacheRead > 0 && cacheWrite === 0) risks.push("P1 cacheRead exists without cacheWrite; run A/B before relying on direct MiniMax cache");
   if (truncatedTurns > 0) risks.push(`P1 response truncation observed in ${truncatedTurns} bridge turn(s); review answers may be incomplete`);
@@ -962,6 +995,8 @@ function auditVerdict({ route, ledgerEntries, pluginEntries, promptCache }) {
     unknownFinishReasonTurns,
     openrouterMaxBodyBytes: openrouterMaxBody,
     directMaxBodyBytes: directMaxBody,
+    openrouterMaxMessageBytes,
+    directMaxMessageBytes,
     byProviderRoleModel: byProvider,
     risks,
   };
@@ -1000,6 +1035,7 @@ async function auditCommand(args) {
       files: latestPluginLogPaths(3),
       eventsRead: pluginEvents.length,
       requests: aggregateEntries(pluginEntries),
+      topRequests: topRequestEntries(pluginEntries),
       promptCache,
     },
     verdict,

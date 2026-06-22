@@ -85,11 +85,19 @@ that are not proven by A/B data.
 
 Audit groups also include:
 
+- `maxSystemBytes`, `maxMessageBytes`, `maxToolBytes`: largest observed request
+  sections for that provider/role/model group.
+- `maxBodySessionID`: session id for the largest observed request body when
+  available.
 - `truncatedTurns`: bridge turns whose provider metadata looked output-limited.
 - `nearOutputCapTurns`: bridge turns that used at least the configured output
   cap ratio.
 - `unknownFinishReasonTurns`: bridge turns where the provider did not surface a
   usable finish reason.
+
+`pluginLogs.topRequests` lists the largest recent provider requests with section
+bytes and session ids. Use it to decide whether the next fix should target
+system prompt size, tool definitions, or accumulated message history.
 
 ## Canary And Optimization Checks
 
