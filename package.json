@@ -1,0 +1,24 @@
+{
+  "name": "mavis-minimax-bridge",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Local JSONL bridge for controlled Codex-to-MiniMax Code collaboration and token optimization checks.",
+  "type": "module",
+  "bin": {
+    "mavis-minimax-bridge": "./bridge.mjs"
+  },
+  "scripts": {
+    "check": "node --check ./bridge.mjs",
+    "status": "node ./bridge.mjs status",
+    "optimize:check": "node ./bridge.mjs optimize-check --skip-canary"
+  },
+  "keywords": [
+    "mavis",
+    "minimax",
+    "opencode",
+    "codex",
+    "bridge",
+    "token-optimization"
+  ],
+  "license": "MIT"
+}
