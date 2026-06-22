@@ -44,9 +44,9 @@ function printJson(value) {
 function usage() {
   console.log(`Usage:
   node bridge/bridge.mjs status
-  node bridge/bridge.mjs canary-estimate [--long-prompt <file>]
+  node bridge/bridge.mjs canary-estimate [--long-prompt <file>] [--repeat-long <n>]
   node bridge/bridge.mjs canary [--port <port>]
-  node bridge/bridge.mjs optimize-check [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>]
+  node bridge/bridge.mjs optimize-check [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
   node bridge/bridge.mjs ask --mode review-only --task <file> [--port <port>]
   node bridge/bridge.mjs mvs-status [--session <mvs-id>] [--daemon-port <port>]
   node bridge/bridge.mjs mvs-peers [--session <mvs-id>] [--daemon-port <port>]
@@ -124,11 +124,15 @@ function quoteCmd(value) {
 
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
+  const body = await response.text().catch(() => "");
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
     throw new Error(`${response.status} ${response.statusText}${body ? `: ${body.slice(0, 500)}` : ""}`);
   }
-  return response.json();
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    throw new Error(`expected JSON from ${url}, got ${body ? body.slice(0, 500) : "empty response"}: ${error.message}`);
+  }
 }
 
 async function fetchJsonWithTimeout(url, options = {}, timeoutSec = 60) {
@@ -165,12 +169,16 @@ function canaryPrompts(args) {
   ];
   const longPrompt = readLongPrompt(args);
   if (longPrompt) {
-    prompts.push({
-      label: "long",
-      path: longPrompt.path,
-      chars: longPrompt.chars,
-      text: `Reply exactly: LONGOK\n\n${longPrompt.text}`,
-    });
+    const maxRepeats = Number(config.maxLongPromptRepeats || 3);
+    const repeatLong = Math.max(1, Math.min(maxRepeats, Number(argValue(args, "--repeat-long", "1")) || 1));
+    for (let i = 1; i <= repeatLong; i += 1) {
+      prompts.push({
+        label: repeatLong === 1 ? "long" : `long-${i}`,
+        path: longPrompt.path,
+        chars: longPrompt.chars,
+        text: `Reply exactly: LONGOK${i}\n\n${longPrompt.text}`,
+      });
+    }
   }
   return prompts;
 }
@@ -180,6 +188,7 @@ function canaryEstimate(args) {
   const promptChars = prompts.reduce((sum, prompt) => sum + Buffer.byteLength(prompt.text, "utf8"), 0);
   const tinyInputEstimateTokens = Number(config.tinyCanaryInputEstimateTokens || 12000);
   const extraPromptTokens = Math.ceil(Math.max(0, promptChars - 40) / 4);
+  const longPrompt = prompts.find((prompt) => prompt.path);
   return {
     event: "canary-estimate",
     turns: prompts.length,
@@ -187,9 +196,10 @@ function canaryEstimate(args) {
     estimatedInputTokens: tinyInputEstimateTokens + extraPromptTokens,
     tinyInputEstimateTokens,
     maxInputTokens: Number(config.maxInputTokens || 200000),
-    longPrompt: prompts.find((prompt) => prompt.label === "long") ? {
-      path: prompts.find((prompt) => prompt.label === "long").path,
-      chars: prompts.find((prompt) => prompt.label === "long").chars,
+    longPrompt: longPrompt ? {
+      path: longPrompt.path,
+      chars: longPrompt.chars,
+      repeats: prompts.filter((prompt) => prompt.path).length,
     } : null,
     note: "Estimate only. It includes a conservative tiny-canary overhead and does not send a model request.",
   };
@@ -225,9 +235,13 @@ function assertUsableServer(server) {
   if (!server || server.error) {
     throw new Error(`no usable opencode serve found${server?.error ? `: ${server.error}` : ""}`);
   }
-  if (server.config?.model !== config.requireModel) {
-    throw new Error(`main model mismatch: expected ${config.requireModel}, got ${server.config?.model}`);
+  if (server.config?.model !== requiredModel()) {
+    throw new Error(`main model mismatch: expected ${requiredModel()}, got ${server.config?.model}`);
   }
+}
+
+function requiredModel() {
+  return config.requireModel || config.defaultModel || "minimax/MiniMax-M3";
 }
 
 async function selectServer(args) {
@@ -242,13 +256,13 @@ async function selectServer(args) {
   return selected;
 }
 
-function modelSpec(model = config.defaultModel) {
-  const [providerID, ...rest] = String(model).split("/");
+function modelSpec(model = null) {
+  const [providerID, ...rest] = String(model || requiredModel()).split("/");
   return { providerID, modelID: rest.join("/") };
 }
 
 function sessionDirectory() {
-  return config.sessionDirectory || path.join(os.homedir(), ".mavis", "agents", "mavis", "workspace");
+  return config.sessionDirectory || path.join(os.homedir(), ".minimax", "agents", "mavis", "workspace");
 }
 
 function sessionQuery() {
@@ -430,7 +444,7 @@ function routingVerdict(server) {
   const nonMain = ["small_model", "plan", "build", "general", "explore"];
   const nonMainOpenRouter = nonMain.every((key) => typeof routing[key] === "string" && routing[key].startsWith("openrouter/"));
   return {
-    mainDirectM3: routing.model === config.requireModel,
+    mainDirectM3: routing.model === requiredModel(),
     nonMainOpenRouter,
     routing,
   };

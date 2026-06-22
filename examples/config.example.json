@@ -12,6 +12,7 @@
   "maxInputTokens": 200000,
   "tinyCanaryInputEstimateTokens": 12000,
   "maxLongPromptChars": 160000,
+  "maxLongPromptRepeats": 3,
   "asciiConsole": true,
   "denySessions": [],
   "env": {

@@ -133,13 +133,14 @@ Estimate token exposure before spending tokens:
 ```powershell
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs canary-estimate --long-prompt path\to\stable-prefix.txt
+node .\bridge.mjs canary-estimate --long-prompt path\to\stable-prefix.txt --repeat-long 2
 ```
 
 Build a realistic local long-prompt file from repository docs/config:
 
 ```powershell
 npm run prefix:build
-node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt
+node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repeat-long 2
 ```
 
 ## Safety

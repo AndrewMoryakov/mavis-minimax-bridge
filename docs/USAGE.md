@@ -25,7 +25,7 @@ Build a realistic local long-prompt file for cache-write canaries:
 
 ```powershell
 npm run prefix:build
-node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt
+node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repeat-long 2
 ```
 
 Safety notes:
