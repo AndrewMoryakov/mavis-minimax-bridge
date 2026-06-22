@@ -36,6 +36,65 @@ outbox.jsonl
 These files are ignored by git. Keep local session ids, paths, deny-lists, and
 coordination history there.
 
+## AI Agent Install
+
+Use this checklist when another AI agent needs to deploy the bridge on a user
+machine.
+
+Prerequisites:
+
+- Windows with MiniMax Code / Mavis already installed and running.
+- Node.js 20+ available as `node`.
+- Git available as `git`.
+- Mavis CLI available as `mavis`, or installed at `%USERPROFILE%\.mavis\bin\mavis.cmd`.
+- User approval before sending any prompt that can start a model turn.
+
+Install:
+
+```powershell
+git clone https://github.com/AndrewMoryakov/mavis-minimax-bridge.git
+cd mavis-minimax-bridge
+npm run init
+node --check .\bridge.mjs
+node .\bridge.mjs status
+```
+
+Configure:
+
+1. Open `config.json`.
+2. Set `currentMavisSession` only if the user gives a real `mvs_...` session id.
+3. Add burned, expensive, or orchestration sessions to `denySessions`.
+4. Leave `requireModel` as `minimax/MiniMax-M3` unless the user explicitly wants another main model.
+5. Keep `maxInputTokens`, `mvsMaxSendChars`, and `maxLongPromptChars` conservative.
+
+Verify without spending model tokens:
+
+```powershell
+node .\bridge.mjs status
+node .\bridge.mjs optimize-check --skip-canary --session mvs_<id>
+```
+
+Run a tiny canary only after user approval:
+
+```powershell
+node .\bridge.mjs optimize-check
+```
+
+Use for collaboration:
+
+```powershell
+node .\bridge.mjs ask --mode review-only --task .\task.md
+node .\bridge.mjs mvs-send --session mvs_<id> --task .\task.md --yes
+```
+
+Rules for agents:
+
+- Do not commit or publish `config.json`, `ledger.jsonl`, `inbox.jsonl`, or `outbox.jsonl`.
+- Do not use `mvs-send`, `canary`, `ask`, or `optimize-check` without understanding that they may spend tokens.
+- Prefer `review-only` tasks before asking MiniMax to propose changes.
+- Keep bridge tasks compact and bounded.
+- Record important results in `ledger.jsonl` by using bridge commands, not manual edits.
+
 ## Commands
 
 ```powershell
