@@ -83,6 +83,14 @@ optional `mavis usage` data. It reports provider/role/model groups and flags
 risks such as growing OpenRouter request bodies or direct MiniMax cache savings
 that are not proven by A/B data.
 
+Audit groups also include:
+
+- `truncatedTurns`: bridge turns whose provider metadata looked output-limited.
+- `nearOutputCapTurns`: bridge turns that used at least the configured output
+  cap ratio.
+- `unknownFinishReasonTurns`: bridge turns where the provider did not surface a
+  usable finish reason.
+
 ## Canary And Optimization Checks
 
 These commands can spend tokens:
@@ -97,6 +105,18 @@ node .\bridge.mjs optimize-check --long-prompt .\stable-prefix.local.txt --repea
 ```
 
 Run `canary-estimate` before any canary that might spend tokens.
+
+Each bridge model turn records `finishReason`, `truncated`, `outputCap`,
+`nearOutputCap`, `cacheStatus`, and `optimizationContext` in the local ledger.
+The bridge injects a compact `<optimization_context>` prompt block by default so
+MiniMax can account for the current route, output cap, cache status, and whether
+the previous answer looked truncated.
+
+Disable the prompt block only for strict A/B tests:
+
+```powershell
+node .\bridge.mjs config set --key includeOptimizationContext --value false
+```
 
 ## Collaboration
 

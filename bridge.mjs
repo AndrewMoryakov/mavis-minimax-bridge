@@ -23,6 +23,9 @@ function defaultConfig() {
     maxTurns: 3,
     maxWallClockSec: 180,
     maxInputTokens: 200000,
+    outputCapTokens: 8192,
+    nearOutputCapRatio: 0.9,
+    includeOptimizationContext: true,
     tinyCanaryInputEstimateTokens: 12000,
     maxLongPromptChars: 160000,
     maxLongPromptRepeats: 3,
@@ -247,7 +250,10 @@ function canaryPrompts(args) {
 
 function canaryEstimate(args) {
   const prompts = canaryPrompts(args);
-  const promptChars = prompts.reduce((sum, prompt) => sum + Buffer.byteLength(prompt.text, "utf8"), 0);
+  const promptChars = prompts.reduce((sum, prompt) => {
+    const text = addOptimizationContext(prompt.text, { role: "main" });
+    return sum + Buffer.byteLength(text, "utf8");
+  }, 0);
   const tinyInputEstimateTokens = Number(config.tinyCanaryInputEstimateTokens || 12000);
   const extraPromptTokens = Math.ceil(Math.max(0, promptChars - 40) / 4);
   const longPrompt = prompts.find((prompt) => prompt.path);
@@ -367,10 +373,11 @@ async function createSession(port, title) {
 }
 
 async function sendPrompt(port, sessionID, text, options = {}) {
+  const promptText = addOptimizationContext(text, options);
   const body = {
     model: modelSpec(options.model || config.defaultModel),
     noReply: Boolean(options.noReply),
-    parts: [{ type: "text", text }],
+    parts: [{ type: "text", text: promptText }],
   };
   if (options.agent) body.agent = options.agent;
   if (options.system) body.system = options.system;
@@ -393,17 +400,101 @@ function assistantText(result) {
     .join("");
 }
 
-function turnSummary(result) {
+function firstKnownValue(value, keys, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 5) return null;
+  for (const key of keys) {
+    if (value[key] !== undefined && value[key] !== null && value[key] !== "") return value[key];
+  }
+  for (const child of Object.values(value)) {
+    const found = firstKnownValue(child, keys, depth + 1);
+    if (found !== null && found !== undefined && found !== "") return found;
+  }
+  return null;
+}
+
+function finishReason(result) {
+  return firstKnownValue(result, [
+    "finish_reason",
+    "finishReason",
+    "stop_reason",
+    "stopReason",
+    "completion_reason",
+    "completionReason",
+  ]) || "unknown";
+}
+
+function roleOutputCap(role = "main") {
+  const caps = config.roleOutputCaps && typeof config.roleOutputCaps === "object" ? config.roleOutputCaps : {};
+  return Number(caps[role] || config.outputCapTokens || 8192);
+}
+
+function isTruncatedByFinishReason(reason) {
+  return ["length", "max_tokens", "max_output_tokens", "truncated", "stop_sequence_length"].includes(String(reason || "").toLowerCase());
+}
+
+function cacheStatus(cacheRead, cacheWrite) {
+  if (Number(cacheWrite || 0) > 0) return "write-observed";
+  if (Number(cacheRead || 0) > 0) return "read-observed-write-zero";
+  return "none";
+}
+
+function optimizationContext(options = {}) {
+  const role = options.role || "main";
+  const route = options.model || config.defaultModel || requiredModel();
+  const outputCap = roleOutputCap(role);
+  return {
+    input_truncated: Boolean(options.inputTruncated),
+    output_cap: outputCap,
+    route,
+    role,
+    cache_status: options.cacheStatus || "unknown",
+    last_response_truncated: Boolean(options.lastResponseTruncated),
+  };
+}
+
+function addOptimizationContext(text, options = {}) {
+  if (config.includeOptimizationContext === false || options.includeOptimizationContext === false) return text;
+  const context = optimizationContext(options);
+  return [
+    "<optimization_context>",
+    JSON.stringify(context),
+    "</optimization_context>",
+    "",
+    text,
+  ].join("\n");
+}
+
+function turnSummary(result, options = {}) {
   const info = result?.info || {};
   const tokens = info?.tokens || {};
   const cache = tokens?.cache || {};
+  const role = options.role || "main";
+  const outputCap = roleOutputCap(role);
+  const outputTokens = Number(tokens.output || 0);
+  const reason = finishReason(result);
+  const truncated = isTruncatedByFinishReason(reason);
+  const ratio = outputCap > 0 ? outputTokens / outputCap : 0;
+  const cacheRead = Number(cache.read || 0);
+  const cacheWrite = Number(cache.write || 0);
   return {
     providerID: info.providerID || null,
     modelID: info.modelID || null,
     inputTokens: Number(tokens.input || 0),
-    outputTokens: Number(tokens.output || 0),
-    cacheWrite: Number(cache.write || 0),
-    cacheRead: Number(cache.read || 0),
+    outputTokens,
+    cacheWrite,
+    cacheRead,
+    finishReason: reason,
+    truncated,
+    outputCap,
+    outputCapRatio: Number(ratio.toFixed(4)),
+    nearOutputCap: ratio >= Number(config.nearOutputCapRatio || 0.9),
+    cacheStatus: cacheStatus(cacheRead, cacheWrite),
+    optimizationContext: optimizationContext({
+      role,
+      model: parseModelRef(info.providerID, info.modelID) || options.model || config.defaultModel,
+      cacheStatus: cacheStatus(cacheRead, cacheWrite),
+      lastResponseTruncated: options.lastResponseTruncated,
+    }),
     reply: assistantText(result).slice(0, 200),
   };
 }
@@ -457,6 +548,11 @@ function normalizedTurnEntry(turn, routing = {}, fallback = {}) {
     cacheRead: Number(turn.cacheRead || 0),
     cacheWrite: Number(turn.cacheWrite || 0),
     bodyBytes: Number(turn.bodyBytes || 0),
+    finishReason: turn.finishReason || "unknown",
+    truncated: Boolean(turn.truncated),
+    outputCap: Number(turn.outputCap || roleOutputCap(fallback.role || "main")),
+    nearOutputCap: Boolean(turn.nearOutputCap),
+    cacheStatus: turn.cacheStatus || cacheStatus(turn.cacheRead, turn.cacheWrite),
   };
 }
 
@@ -482,6 +578,8 @@ function extractSignalsFromMessages(messages) {
     cacheRead: assistant.reduce((sum, info) => sum + Number(info?.tokens?.cache?.read || 0), 0),
     inputTokens: assistant.reduce((sum, info) => sum + Number(info?.tokens?.input || 0), 0),
     outputTokens: assistant.reduce((sum, info) => sum + Number(info?.tokens?.output || 0), 0),
+    unknownFinishReason: messages.filter((message) => finishReason(message) === "unknown").length,
+    truncated: messages.filter((message) => isTruncatedByFinishReason(finishReason(message))).length,
   };
 }
 
@@ -496,10 +594,17 @@ async function runCanarySequence(server, args, titlePrefix) {
   const timeoutSec = Math.min(config.maxWallClockSec || 180, 75);
   const messages = [];
   const turns = [];
+  let lastResponseTruncated = false;
   for (const prompt of prompts) {
-    const result = await sendPrompt(server.port, sessionID, prompt.text, { timeoutSec });
+    const result = await sendPrompt(server.port, sessionID, prompt.text, {
+      timeoutSec,
+      role: "main",
+      lastResponseTruncated,
+    });
     messages.push(result);
-    turns.push({ label: prompt.label, path: prompt.path || null, chars: prompt.chars || prompt.text.length, ...turnSummary(result) });
+    const summary = turnSummary(result, { role: "main", lastResponseTruncated });
+    lastResponseTruncated = summary.truncated;
+    turns.push({ label: prompt.label, path: prompt.path || null, chars: prompt.chars || prompt.text.length, ...summary });
     const signals = extractSignalsFromMessages(messages);
     if (signals.inputTokens > Number(config.maxInputTokens || 200000)) {
       return {
@@ -653,6 +758,9 @@ function publicConfigSummary() {
     mvsMaxSendChars: config.mvsMaxSendChars,
     maxWallClockSec: config.maxWallClockSec,
     maxInputTokens: config.maxInputTokens,
+    outputCapTokens: config.outputCapTokens,
+    nearOutputCapRatio: config.nearOutputCapRatio,
+    includeOptimizationContext: config.includeOptimizationContext,
     tinyCanaryInputEstimateTokens: config.tinyCanaryInputEstimateTokens,
     maxLongPromptChars: config.maxLongPromptChars,
     maxLongPromptRepeats: config.maxLongPromptRepeats,
@@ -731,6 +839,9 @@ function aggregateEntries(entries) {
         cacheRead: 0,
         cacheWrite: 0,
         maxBodyBytes: 0,
+        truncatedTurns: 0,
+        nearOutputCapTurns: 0,
+        unknownFinishReasonTurns: 0,
       });
     }
     const group = groups.get(key);
@@ -740,6 +851,9 @@ function aggregateEntries(entries) {
     group.cacheRead += Number(entry.cacheRead || 0);
     group.cacheWrite += Number(entry.cacheWrite || 0);
     group.maxBodyBytes = Math.max(group.maxBodyBytes, Number(entry.bodyBytes || 0));
+    if (entry.truncated) group.truncatedTurns += 1;
+    if (entry.nearOutputCap) group.nearOutputCapTurns += 1;
+    if ((entry.finishReason || "unknown") === "unknown") group.unknownFinishReasonTurns += 1;
   }
   return [...groups.values()].sort((a, b) =>
     a.provider.localeCompare(b.provider) || a.role.localeCompare(b.role) || a.model.localeCompare(b.model)
@@ -824,6 +938,9 @@ function auditVerdict({ route, ledgerEntries, pluginEntries, promptCache }) {
   const directMaxBody = Math.max(0, ...pluginEntries.filter((entry) => entry.provider === "minimax").map((entry) => entry.bodyBytes || 0));
   const cacheRead = ledgerEntries.reduce((sum, entry) => sum + Number(entry.cacheRead || 0), 0);
   const cacheWrite = ledgerEntries.reduce((sum, entry) => sum + Number(entry.cacheWrite || 0), 0);
+  const truncatedTurns = ledgerEntries.filter((entry) => entry.truncated).length;
+  const nearOutputCapTurns = ledgerEntries.filter((entry) => entry.nearOutputCap).length;
+  const unknownFinishReasonTurns = ledgerEntries.filter((entry) => (entry.finishReason || "unknown") === "unknown").length;
   const risks = [];
   if (!route.mainDirectM3) risks.push("P0 main route is not direct minimax/MiniMax-M3");
   if (!route.nonMainOpenRouter) risks.push("P1 not all non-main roles are routed through OpenRouter as expected");
@@ -831,12 +948,18 @@ function auditVerdict({ route, ledgerEntries, pluginEntries, promptCache }) {
   if (directMaxBody > Number(config.maxInputTokens || 200000)) risks.push(`P1 direct MiniMax request body reached ${directMaxBody} bytes`);
   if (promptCache.enforcePatchedEvents > 0 && cacheWrite === 0) risks.push("P1 prompt-cache patch is active, but MiniMax direct cacheWrite remains 0; savings are unproven");
   if (cacheRead > 0 && cacheWrite === 0) risks.push("P1 cacheRead exists without cacheWrite; run A/B before relying on direct MiniMax cache");
+  if (truncatedTurns > 0) risks.push(`P1 response truncation observed in ${truncatedTurns} bridge turn(s); review answers may be incomplete`);
+  if (nearOutputCapTurns > 0) risks.push(`P2 ${nearOutputCapTurns} bridge turn(s) were near output cap; consider tighter task slicing`);
+  if (unknownFinishReasonTurns > 0) risks.push(`P2 finish_reason was not surfaced for ${unknownFinishReasonTurns} bridge turn(s); truncation detection is incomplete`);
   return {
     ok: risks.length === 0,
     mainDirectM3: route.mainDirectM3,
     nonMainOpenRouter: route.nonMainOpenRouter,
     cacheReadObserved: cacheRead > 0,
     cacheWriteObserved: cacheWrite > 0,
+    truncatedTurns,
+    nearOutputCapTurns,
+    unknownFinishReasonTurns,
     openrouterMaxBodyBytes: openrouterMaxBody,
     directMaxBodyBytes: directMaxBody,
     byProviderRoleModel: byProvider,
@@ -883,6 +1006,7 @@ async function auditCommand(args) {
     notes: [
       "Direct MiniMax cache is treated as unproven until A/B confirms the prompt-cache patch changes cacheRead behavior.",
       "OpenRouter prompt-cache mutation is off unless MAVIS_PROMPT_CACHE_OPENROUTER=1.",
+      "Bridge prompts include a compact optimization_context block unless includeOptimizationContext=false.",
       "bodyBytes are request-size evidence, not provider billing tokens.",
     ],
   };
@@ -1105,19 +1229,26 @@ async function askCommand(args) {
   const results = [];
   const turns = [];
   const timeoutSec = config.maxWallClockSec || 180;
+  let lastResponseTruncated = false;
   for (let index = 0; index < tasks.length; index += 1) {
     const task = tasks[index];
     const prompt = mode === "review-only"
       ? `Review only. Do not edit files. Answer concisely.\n\n${task.text}`
       : `Propose a unified diff only. Do not apply it.\n\n${task.text}`;
-    const result = await sendPrompt(server.port, session.id, prompt, { timeoutSec });
+    const result = await sendPrompt(server.port, session.id, prompt, {
+      timeoutSec,
+      role: "main",
+      lastResponseTruncated,
+    });
     results.push(result);
     const answer = assistantText(result);
+    const summary = turnSummary(result, { role: "main", lastResponseTruncated });
+    lastResponseTruncated = summary.truncated;
     turns.push({
       index: index + 1,
       taskPath: task.taskPath,
       chars: task.text.length,
-      ...turnSummary(result),
+      ...summary,
       answer: answer.slice(-12000),
     });
     const signals = extractSignalsFromMessages(results);

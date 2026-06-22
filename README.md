@@ -74,6 +74,7 @@ node .\bridge.mjs status
 node .\bridge.mjs state
 node .\bridge.mjs mode list
 node .\bridge.mjs token-stats --ledger
+node .\bridge.mjs audit
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs optimize-check --skip-canary --session mvs_<id>
 ```
@@ -103,6 +104,10 @@ Rules for agents:
 - Do not use `mvs-send`, `canary`, `ask`, or `optimize-check` without understanding that they may spend tokens.
 - Prefer `review-only` tasks before asking MiniMax to propose changes.
 - Keep bridge tasks compact and bounded.
+- Treat direct MiniMax prompt-cache savings as unproven unless an A/B run proves
+  cache behavior changed.
+- Check `finishReason`, `truncated`, `nearOutputCap`, and `cacheStatus` in
+  bridge output before trusting a review answer.
 - Record important results in `ledger.jsonl` by using bridge commands, not manual edits.
 
 ## Commands
@@ -141,7 +146,9 @@ node .\bridge.mjs tail
 OpenCode routing, and optional `mavis usage session` data. It does not send a
 model request. Direct MiniMax prompt-cache savings are reported as unproven
 unless an A/B run shows that disabling the prompt-cache patch reduces
-`cacheRead`.
+`cacheRead`. Bridge turns also record `finishReason`, `truncated`,
+`nearOutputCap`, `cacheStatus`, and the compact `optimizationContext` that was
+sent with the prompt.
 
 ## State And Modes
 
@@ -187,6 +194,15 @@ Available enforcement modes:
 `cacheWriteObserved=false` does not automatically fail the verdict. Provider
 cache reporting can remain zero on tiny prompts. Use `--long-prompt <file>`
 only when you intentionally want a cache-write canary.
+
+The bridge adds a small `<optimization_context>` block to model prompts by
+default. It tells MiniMax the current role, route, output cap, cache status, and
+whether the previous answer looked truncated. Disable it only for strict A/B
+tests:
+
+```powershell
+node .\bridge.mjs config set --key includeOptimizationContext --value false
+```
 
 Estimate token exposure before spending tokens:
 
