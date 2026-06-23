@@ -91,26 +91,26 @@ function printJson(value) {
 
 function usage() {
   console.log(`Usage:
-  node bridge/bridge.mjs status
-  node bridge/bridge.mjs state
-  node bridge/bridge.mjs config show
-  node bridge/bridge.mjs config set --key <name|env.NAME> --value <json|string>
-  node bridge/bridge.mjs mode list
-  node bridge/bridge.mjs mode set [--profile max|medium|free] [--prompt-cache enforce|observe|off] [--context-budget enforce|observe|off]
-  node bridge/bridge.mjs session show|set|clear [--session <mvs-id>]
-  node bridge/bridge.mjs deny-session list|add|remove --session <id>
-  node bridge/bridge.mjs token-stats [--session <mvs-id>] [--ledger] [--lines <n>]
-  node bridge/bridge.mjs audit [--session <mvs-id>] [--lines <n>] [--plugin-lines <n>]
-  node bridge/bridge.mjs canary-estimate [--long-prompt <file>] [--repeat-long <n>]
-  node bridge/bridge.mjs canary [--port <port>]
-  node bridge/bridge.mjs optimize-check [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
-  node bridge/bridge.mjs ask --mode review-only --task <file> [--task <followup-file> ...] [--port <port>]
-  node bridge/bridge.mjs mvs-status [--session <mvs-id>] [--daemon-port <port>]
-  node bridge/bridge.mjs mvs-peers [--session <mvs-id>] [--daemon-port <port>]
-  node bridge/bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
-  node bridge/bridge.mjs mvs-send --content <text>|--task <file> --yes [--session <mvs-id>] [--daemon-port <port>]
-  node bridge/bridge.mjs tail [--lines <n>]
-  node bridge/bridge.mjs stop`);
+  node .\\bridge.mjs status
+  node .\\bridge.mjs state
+  node .\\bridge.mjs config show
+  node .\\bridge.mjs config set --key <name|env.NAME> --value <json|string>
+  node .\\bridge.mjs mode list
+  node .\\bridge.mjs mode set [--profile max|medium|free] [--prompt-cache enforce|observe|off] [--context-budget enforce|observe|off]
+  node .\\bridge.mjs session show|set|clear [--session <mvs-id>]
+  node .\\bridge.mjs deny-session list|add|remove --session <id>
+  node .\\bridge.mjs token-stats [--session <mvs-id>] [--ledger] [--lines <n>]
+  node .\\bridge.mjs audit [--session <mvs-id>] [--lines <n>] [--plugin-lines <n>]
+  node .\\bridge.mjs canary-estimate [--long-prompt <file>] [--repeat-long <n>]
+  node .\\bridge.mjs canary [--port <port>]
+  node .\\bridge.mjs optimize-check [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
+  node .\\bridge.mjs ask --mode review-only --task <file> [--task <followup-file> ...] [--port <port>]
+  node .\\bridge.mjs mvs-status [--session <mvs-id>] [--daemon-port <port>]
+  node .\\bridge.mjs mvs-peers [--session <mvs-id>] [--daemon-port <port>]
+  node .\\bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
+  node .\\bridge.mjs mvs-send --content <text>|--task <file> --yes [--session <mvs-id>] [--daemon-port <port>]
+  node .\\bridge.mjs tail [--lines <n>]
+  node .\\bridge.mjs stop`);
 }
 
 function argValue(args, name, fallback = null) {
