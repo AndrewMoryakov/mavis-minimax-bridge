@@ -235,6 +235,9 @@ contract.
 See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference,
 including status, modes, token statistics, and state-changing commands.
 
+After a MiniMax Code update or reinstall, see
+[docs/RESTORE_AFTER_UPDATE.md](docs/RESTORE_AFTER_UPDATE.md).
+
 ## Related
 
 This bridge was split out from the MiniMax token optimization work:
