@@ -10,6 +10,7 @@
   "scripts": {
     "check": "node --check ./bridge.mjs",
     "init": "node ./scripts/init-runtime.mjs",
+    "install:skill": "node ./scripts/install-mavis-skill.mjs",
     "canary:estimate": "node ./bridge.mjs canary-estimate",
     "prefix:build": "node ./scripts/build-stable-prefix.mjs",
     "status": "node ./bridge.mjs status",

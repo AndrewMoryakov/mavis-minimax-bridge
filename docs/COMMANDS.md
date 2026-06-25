@@ -9,12 +9,48 @@ turn and should be run only after user approval.
 node .\bridge.mjs status
 node .\bridge.mjs state
 node .\bridge.mjs config show
+npm run install:skill
 ```
 
 - `status`: inspect live Desktop-owned `opencode serve` config.
 - `state`: inspect live server, runtime files, current modes, and recent ledger
   events.
 - `config show`: show effective bridge config plus raw local config.
+- `install:skill`: install the optional MiniMax slash-palette skill as
+  `/bridge`.
+
+## MiniMax Slash Skill
+
+Install:
+
+```powershell
+npm run install:skill
+```
+
+After MiniMax refreshes its skill index, use:
+
+```text
+/bridge help
+/bridge status
+/bridge audit
+/bridge audit mvs_<id>
+/bridge session show
+/bridge session set mvs_<id>
+/bridge mode max
+/bridge mode medium
+/bridge mode free
+/bridge mode enforce
+/bridge mode observe
+/bridge mode off
+/bridge estimate
+/bridge ask
+/bridge send mvs_<id>
+```
+
+The slash skill does not add a new daemon. It instructs MiniMax to run the local
+bridge CLI from this repository. `status`, `audit`, `session show`, `mode list`,
+and `estimate` are local-only. `ask`, `send`, `canary`, and `optimize-check`
+without `--skip-canary` can spend tokens and need explicit user approval.
 
 ## Modes
 

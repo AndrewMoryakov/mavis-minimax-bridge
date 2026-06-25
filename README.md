@@ -21,6 +21,7 @@ Clone the repository, then optionally create a local config:
 git clone https://github.com/AndrewMoryakov/mavis-minimax-bridge.git
 cd mavis-minimax-bridge
 npm run init
+npm run install:skill
 node .\bridge.mjs status
 ```
 
@@ -57,6 +58,7 @@ cd mavis-minimax-bridge
 npm run init
 node --check .\bridge.mjs
 node .\bridge.mjs status
+npm run install:skill
 ```
 
 Configure:
@@ -78,6 +80,19 @@ node .\bridge.mjs audit
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs optimize-check --skip-canary --session mvs_<id>
 ```
+
+Optional MiniMax GUI slash entry:
+
+```powershell
+npm run install:skill
+```
+
+This installs an agent-local `bridge` skill into
+`%USERPROFILE%\.mavis\agents\mavis\skills\bridge\SKILL.md`. MiniMax uses the
+skills list for its slash palette, so users can type `/bridge status`,
+`/bridge audit`, `/bridge session`, `/bridge mode`, or `/bridge ask`. The skill
+is only a safe router to the local CLI; token-spending commands still require
+explicit user approval.
 
 Run a tiny canary only after user approval:
 
@@ -140,6 +155,19 @@ node .\bridge.mjs mvs-peers --session mvs_<id>
 node .\bridge.mjs mvs-messages --session mvs_<id> --limit 5
 node .\bridge.mjs mvs-send --session mvs_<id> --task path\to\task.md --yes
 node .\bridge.mjs tail
+```
+
+GUI slash skill equivalents after `npm run install:skill`:
+
+```text
+/bridge status
+/bridge audit
+/bridge session show
+/bridge session set mvs_<id>
+/bridge mode max
+/bridge mode enforce
+/bridge estimate
+/bridge ask
 ```
 
 `audit` is local-only: it reads the bridge ledger, recent MiniMax plugin logs,
