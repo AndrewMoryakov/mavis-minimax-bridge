@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = path.join(scriptRepoRoot, "skills", "bridge", "SKILL.md");
+const source = path.join(scriptRepoRoot, "skills", "codex-bridge", "SKILL.md");
 const args = new Map();
 
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -22,21 +22,19 @@ for (let i = 2; i < process.argv.length; i += 1) {
 }
 
 if (args.has("help") || args.has("h")) {
-  console.log(`Install the bridge slash skill into a Mavis agent
+  console.log(`Install the bridge skill into Codex
 
 Usage:
-  node .\\scripts\\install-mavis-skill.mjs [--mavis-root <path>] [--repo-root <path>] [--dry-run]
+  node .\\scripts\\install-codex-skill.mjs [--codex-home <path>] [--repo-root <path>] [--dry-run]
 
 Default target:
-  %USERPROFILE%\\.mavis\\agents\\mavis\\skills\\bridge\\SKILL.md
+  %USERPROFILE%\\.codex\\skills\\mavis-minimax-bridge\\SKILL.md
 `);
   process.exit(0);
 }
 
-const mavisRoot = path.resolve(
-  args.get("mavis-root") ?? path.join(os.homedir(), ".mavis", "agents", "mavis")
-);
-const target = path.join(mavisRoot, "skills", "bridge", "SKILL.md");
+const codexHome = path.resolve(args.get("codex-home") ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"));
+const target = path.join(codexHome, "skills", "mavis-minimax-bridge", "SKILL.md");
 const dryRun = args.has("dry-run");
 const repoRoot = path.resolve(args.get("repo-root") ?? process.cwd());
 
@@ -49,7 +47,7 @@ const sourceText = fs.readFileSync(source, "utf8").replaceAll("__BRIDGE_REPO_ROO
 const current = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : null;
 
 if (current === sourceText) {
-  console.log(`skill_unchanged=${target}`);
+  console.log(`codex_skill_unchanged=${target}`);
   process.exit(0);
 }
 
@@ -69,4 +67,4 @@ if (!dryRun) {
   fs.writeFileSync(target, sourceText, "utf8");
 }
 
-console.log(`${dryRun ? "would_install_skill" : "installed_skill"}=${target}`);
+console.log(`${dryRun ? "would_install_codex_skill" : "installed_codex_skill"}=${target}`);

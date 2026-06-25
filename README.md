@@ -22,6 +22,7 @@ git clone https://github.com/AndrewMoryakov/mavis-minimax-bridge.git
 cd mavis-minimax-bridge
 npm run init
 npm run install:skill
+npm run install:codex-skill
 node .\bridge.mjs status
 ```
 
@@ -59,6 +60,7 @@ npm run init
 node --check .\bridge.mjs
 node .\bridge.mjs status
 npm run install:skill
+npm run install:codex-skill
 ```
 
 Configure:
@@ -94,18 +96,46 @@ skills list for its slash palette, so users can type `/bridge status`,
 is only a safe router to the local CLI; token-spending commands still require
 explicit user approval.
 
+Advanced MiniMax install options:
+
+```powershell
+node .\scripts\install-mavis-skill.mjs --dry-run
+node .\scripts\install-mavis-skill.mjs --mavis-root C:\path\to\.mavis\agents\mavis
+node .\scripts\install-mavis-skill.mjs --repo-root C:\path\to\mavis-minimax-bridge
+```
+
+Optional Codex skill:
+
+```powershell
+npm run install:codex-skill
+```
+
+This installs a Codex skill into
+`%USERPROFILE%\.codex\skills\mavis-minimax-bridge\SKILL.md`. Codex can then
+auto-trigger the bridge workflow when the user asks to inspect bridge status,
+audit MiniMax token optimization, coordinate with MiniMax, set a session, or run
+a review-only bridge task.
+
+Advanced Codex install options:
+
+```powershell
+node .\scripts\install-codex-skill.mjs --dry-run
+node .\scripts\install-codex-skill.mjs --codex-home C:\path\to\.codex
+node .\scripts\install-codex-skill.mjs --repo-root C:\path\to\mavis-minimax-bridge
+```
+
 Run a tiny canary only after user approval:
 
 ```powershell
 node .\bridge.mjs canary-estimate
-node .\bridge.mjs optimize-check
+node .\bridge.mjs optimize-check --yes
 ```
 
 Use for collaboration:
 
 ```powershell
-node .\bridge.mjs ask --mode review-only --task .\task.md
-node .\bridge.mjs ask --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
+node .\bridge.mjs ask --yes --mode review-only --task .\task.md
+node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 node .\bridge.mjs mvs-send --session mvs_<id> --task .\task.md --yes
 ```
 
@@ -117,6 +147,7 @@ Rules for agents:
 
 - Do not commit or publish `config.json`, `ledger.jsonl`, `inbox.jsonl`, or `outbox.jsonl`.
 - Do not use `mvs-send`, `canary`, `ask`, or `optimize-check` without understanding that they may spend tokens.
+- The CLI requires `--yes` for token-spending bridge commands; `optimize-check --skip-canary` remains local-only.
 - Prefer `review-only` tasks before asking MiniMax to propose changes.
 - Keep bridge tasks compact and bounded.
 - Treat direct MiniMax prompt-cache savings as unproven unless an A/B run proves
@@ -144,12 +175,12 @@ node .\bridge.mjs token-stats --session mvs_<id>
 node .\bridge.mjs audit
 node .\bridge.mjs audit --session mvs_<id>
 node .\bridge.mjs canary-estimate
-node .\bridge.mjs canary
-node .\bridge.mjs optimize-check
-node .\bridge.mjs optimize-check --session mvs_<id>
-node .\bridge.mjs optimize-check --long-prompt path\to\stable-prefix.txt
-node .\bridge.mjs ask --mode review-only --task path\to\task.md
-node .\bridge.mjs ask --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
+node .\bridge.mjs canary --yes
+node .\bridge.mjs optimize-check --yes
+node .\bridge.mjs optimize-check --yes --session mvs_<id>
+node .\bridge.mjs optimize-check --yes --long-prompt path\to\stable-prefix.txt
+node .\bridge.mjs ask --yes --mode review-only --task path\to\task.md
+node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 node .\bridge.mjs mvs-status --session mvs_<id>
 node .\bridge.mjs mvs-peers --session mvs_<id>
 node .\bridge.mjs mvs-messages --session mvs_<id> --limit 5
@@ -167,8 +198,18 @@ GUI slash skill equivalents after `npm run install:skill`:
 /bridge mode max
 /bridge mode enforce
 /bridge estimate
-/bridge ask
+/bridge ask <task-file>
 ```
+
+Codex skill install:
+
+```powershell
+npm run install:codex-skill
+```
+
+After installing, ask Codex in natural language, for example: "check bridge
+status", "audit MiniMax token optimization through the bridge", or "send a
+review-only task to MiniMax through the bridge".
 
 `audit` is local-only: it reads the bridge ledger, recent MiniMax plugin logs,
 OpenCode routing, and optional `mavis usage session` data. It does not send a
@@ -249,7 +290,8 @@ node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repe
 
 ## Safety
 
-- `mvs-send` requires `--yes` because it starts a model turn.
+- `ask`, `canary`, `mvs-send`, and full `optimize-check` require `--yes`
+  because they start a model turn.
 - `--long-prompt` is opt-in because it spends more tokens.
 - Put burned, orchestration, or expensive sessions in `denySessions`.
 - `ledger.jsonl`, `inbox.jsonl`, and `outbox.jsonl` are local audit files and

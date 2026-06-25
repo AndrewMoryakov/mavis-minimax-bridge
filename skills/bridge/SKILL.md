@@ -13,7 +13,7 @@ description: >-
 Local control surface for `mavis-minimax-bridge`. The bridge is a filesystem
 and HTTP helper, not a daemon. It lives at:
 
-`C:\Users\hopt\.mavis\agents\mavis\workspace\mavis-minimax-bridge`
+`__BRIDGE_REPO_ROOT__`
 
 Always run commands from that directory.
 
@@ -123,16 +123,19 @@ Use this before any canary that may spend tokens.
 ### `/bridge ask`
 
 Requires explicit user approval because it starts a model turn. Use a task file.
-Preferred form:
+If the user provides a task file, use:
 
 ```powershell
-node .\bridge.mjs ask --mode review-only --task path\to\task.md
+node .\bridge.mjs ask --yes --mode review-only --task path\to\task.md
 ```
 
-For guided review:
+If the user provides the request as text, create a compact temporary task file
+in this repository first, then use the same `ask --yes` form.
+
+For guided review with task files supplied by the user:
 
 ```powershell
-node .\bridge.mjs ask --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
+node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 ```
 
 ### `/bridge send mvs_<id>`

@@ -4,6 +4,9 @@
   "private": false,
   "description": "Local JSONL bridge for controlled Codex-to-MiniMax Code collaboration and token optimization checks.",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
     "mavis-minimax-bridge": "./bridge.mjs"
   },
@@ -11,6 +14,7 @@
     "check": "node --check ./bridge.mjs",
     "init": "node ./scripts/init-runtime.mjs",
     "install:skill": "node ./scripts/install-mavis-skill.mjs",
+    "install:codex-skill": "node ./scripts/install-codex-skill.mjs",
     "canary:estimate": "node ./bridge.mjs canary-estimate",
     "prefix:build": "node ./scripts/build-stable-prefix.mjs",
     "status": "node ./bridge.mjs status",
@@ -18,7 +22,9 @@
     "mode": "node ./bridge.mjs mode list",
     "tokens": "node ./bridge.mjs token-stats --ledger",
     "audit": "node ./bridge.mjs audit",
-    "optimize:check": "node ./bridge.mjs optimize-check --skip-canary"
+    "optimize:check:safe": "node ./bridge.mjs optimize-check --skip-canary",
+    "optimize:check": "node ./bridge.mjs optimize-check --skip-canary",
+    "optimize:check:canary": "node ./bridge.mjs optimize-check --yes"
   },
   "keywords": [
     "mavis",

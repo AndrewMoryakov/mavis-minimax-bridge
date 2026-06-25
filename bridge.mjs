@@ -102,9 +102,9 @@ function usage() {
   node .\\bridge.mjs token-stats [--session <mvs-id>] [--ledger] [--lines <n>]
   node .\\bridge.mjs audit [--session <mvs-id>] [--lines <n>] [--plugin-lines <n>]
   node .\\bridge.mjs canary-estimate [--long-prompt <file>] [--repeat-long <n>]
-  node .\\bridge.mjs canary [--port <port>]
-  node .\\bridge.mjs optimize-check [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
-  node .\\bridge.mjs ask --mode review-only --task <file> [--task <followup-file> ...] [--port <port>]
+  node .\\bridge.mjs canary --yes [--port <port>]
+  node .\\bridge.mjs optimize-check [--yes] [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
+  node .\\bridge.mjs ask --yes --mode review-only --task <file> [--task <followup-file> ...] [--port <port>]
   node .\\bridge.mjs mvs-status [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-peers [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
@@ -225,6 +225,51 @@ function readLongPrompt(args) {
     throw new Error(`long prompt too large: ${text.length} chars > ${maxChars}`);
   }
   return { path: resolved, text, chars: text.length };
+}
+
+function requireSpendingApproval(args, command) {
+  if (!args.includes("--yes")) {
+    throw new Error(`${command} requires --yes because it can trigger a model turn`);
+  }
+}
+
+function isDeniedSession(sessionID) {
+  return Boolean(sessionID && config.denySessions?.includes(sessionID));
+}
+
+function assertNotDeniedSession(sessionID, action) {
+  if (isDeniedSession(sessionID)) {
+    throw new Error(`refusing ${action} for denied session ${sessionID}`);
+  }
+}
+
+function estimateInputTokensForText(text) {
+  return Math.ceil(Buffer.byteLength(String(text || ""), "utf8") / 4);
+}
+
+function assertTaskBudget(tasks) {
+  const maxTurns = Number(config.maxTurns || 3);
+  if (tasks.length > maxTurns) {
+    throw new Error(`too many task turns: ${tasks.length} > maxTurns=${maxTurns}`);
+  }
+  const maxChars = Number(config.maxLongPromptChars || 160000);
+  for (const task of tasks) {
+    if (task.text.length > maxChars) {
+      throw new Error(`task file too large: ${task.text.length} chars > maxLongPromptChars=${maxChars}: ${task.taskPath}`);
+    }
+  }
+  const prompts = tasks.map((task) => addOptimizationContext(task.text, { role: "main" }));
+  const estimatedInputTokens = prompts.reduce((sum, prompt) => sum + estimateInputTokensForText(prompt), 0);
+  const maxInputTokens = Number(config.maxInputTokens || 200000);
+  if (estimatedInputTokens > maxInputTokens) {
+    throw new Error(`estimated task input too large: ${estimatedInputTokens} tokens > maxInputTokens=${maxInputTokens}`);
+  }
+  return {
+    estimatedInputTokens,
+    maxInputTokens,
+    maxTurns,
+    maxChars,
+  };
 }
 
 function canaryPrompts(args) {
@@ -586,9 +631,7 @@ function extractSignalsFromMessages(messages) {
 async function runCanarySequence(server, args, titlePrefix) {
   const session = await createSession(server.port, `${titlePrefix}-${Date.now()}`);
   const sessionID = session.id;
-  if (sessionID && config.denySessions?.includes(sessionID)) {
-    throw new Error(`refusing denied session ${sessionID}`);
-  }
+  assertNotDeniedSession(sessionID, "canary");
   const prompts = canaryPrompts(args);
 
   const timeoutSec = Math.min(config.maxWallClockSec || 180, 75);
@@ -782,15 +825,99 @@ function parseConfigValue(value) {
 
 function setConfigKey(key, value) {
   if (!key) throw new Error("--key is required");
+  const allowedEnv = new Set([
+    "MAVIS_PROMPT_CACHE_MODE",
+    "MAVIS_CONTEXT_BUDGET_MODE",
+    "MAVIS_CONTEXT_BUDGET_PROFILE",
+    "MAVIS_PROMPT_CACHE_OPENROUTER",
+  ]);
+  const allowedTopLevel = new Set([
+    "defaultModel",
+    "mavisDaemonPort",
+    "currentMavisSession",
+    "mavisCli",
+    "sessionDirectory",
+    "mvsMaxSendChars",
+    "requireProvider",
+    "requireModel",
+    "maxTurns",
+    "maxWallClockSec",
+    "maxInputTokens",
+    "outputCapTokens",
+    "nearOutputCapRatio",
+    "includeOptimizationContext",
+    "tinyCanaryInputEstimateTokens",
+    "maxLongPromptChars",
+    "maxLongPromptRepeats",
+    "asciiConsole",
+  ]);
   const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };
   if (key.startsWith("env.")) {
     const envKey = key.slice("env.".length);
     if (!envKey) throw new Error("env key is empty");
+    if (!allowedEnv.has(envKey)) throw new Error(`unsupported env key: ${envKey}`);
     next.env[envKey] = value;
   } else {
+    if (!allowedTopLevel.has(key)) throw new Error(`unsupported config key: ${key}`);
     next[key] = value;
   }
+  validateConfig(next);
   return writeConfig(next, `config set ${key}`);
+}
+
+function validateNumberRange(configObject, key, min, max) {
+  if (configObject[key] === null || configObject[key] === undefined) return;
+  const value = Number(configObject[key]);
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`${key} must be a number from ${min} to ${max}`);
+  }
+  configObject[key] = value;
+}
+
+function validateConfig(configObject) {
+  validateNumberRange(configObject, "mavisDaemonPort", 1, 65535);
+  validateNumberRange(configObject, "mvsMaxSendChars", 1, 20000);
+  validateNumberRange(configObject, "maxTurns", 1, 10);
+  validateNumberRange(configObject, "maxWallClockSec", 5, 600);
+  validateNumberRange(configObject, "maxInputTokens", 1000, 10000000);
+  validateNumberRange(configObject, "outputCapTokens", 128, 65536);
+  validateNumberRange(configObject, "nearOutputCapRatio", 0.1, 1);
+  validateNumberRange(configObject, "tinyCanaryInputEstimateTokens", 1, 1000000);
+  validateNumberRange(configObject, "maxLongPromptChars", 100, 1000000);
+  validateNumberRange(configObject, "maxLongPromptRepeats", 1, 10);
+  if (configObject.currentMavisSession && !String(configObject.currentMavisSession).startsWith("mvs_")) {
+    throw new Error("currentMavisSession must be null or mvs_<id>");
+  }
+  if (typeof configObject.asciiConsole !== "boolean") throw new Error("asciiConsole must be boolean");
+  if (typeof configObject.includeOptimizationContext !== "boolean") throw new Error("includeOptimizationContext must be boolean");
+  const allowedProfile = new Set(["max", "medium", "free"]);
+  const allowedMode = new Set(["enforce", "observe", "off"]);
+  if (!allowedProfile.has(configObject.env?.MAVIS_CONTEXT_BUDGET_PROFILE)) {
+    throw new Error("env.MAVIS_CONTEXT_BUDGET_PROFILE must be max, medium, or free");
+  }
+  for (const key of ["MAVIS_PROMPT_CACHE_MODE", "MAVIS_CONTEXT_BUDGET_MODE"]) {
+    if (!allowedMode.has(configObject.env?.[key])) {
+      throw new Error(`env.${key} must be enforce, observe, or off`);
+    }
+  }
+  if (!["", "0", "1"].includes(String(configObject.env?.MAVIS_PROMPT_CACHE_OPENROUTER ?? ""))) {
+    throw new Error("env.MAVIS_PROMPT_CACHE_OPENROUTER must be empty, 0, or 1");
+  }
+}
+
+function redactValue(key, value) {
+  if (/key|token|secret|password|auth/i.test(String(key))) return value ? "[redacted]" : value;
+  return value;
+}
+
+function redactedConfig(configObject) {
+  const out = JSON.parse(JSON.stringify(configObject));
+  if (out.env && typeof out.env === "object") {
+    for (const [key, value] of Object.entries(out.env)) {
+      out.env[key] = redactValue(key, value);
+    }
+  }
+  return out;
 }
 
 function summarizeLedgerStats(events) {
@@ -1093,13 +1220,13 @@ async function stateCommand() {
 function configCommand(args) {
   const [sub] = args;
   if (!sub || sub === "show") {
-    return printJson({ event: "config", config: publicConfigSummary(), raw: config });
+    return printJson({ event: "config", config: publicConfigSummary(), raw: redactedConfig(config) });
   }
   if (sub === "set") {
     const key = argValue(args, "--key");
     const value = parseConfigValue(argValue(args, "--value"));
     const next = setConfigKey(key, value);
-    return printJson({ event: "config-updated", key, value, config: publicConfigSummary(), raw: next });
+    return printJson({ event: "config-updated", key, value: redactValue(key, value), config: publicConfigSummary(), raw: redactedConfig(next) });
   }
   throw new Error(`unknown config command: ${sub}`);
 }
@@ -1192,6 +1319,7 @@ function canaryEstimateCommand(args) {
 }
 
 async function canaryCommand(args) {
+  requireSpendingApproval(args, "canary");
   const server = await selectServer(args);
   const canary = await runCanarySequence(server, args, "bridge-canary");
   const result = {
@@ -1213,6 +1341,7 @@ async function optimizeCheckCommand(args) {
   const route = routingVerdict(server);
   let canary = null;
   if (!args.includes("--skip-canary")) {
+    requireSpendingApproval(args, "optimize-check");
     canary = await runCanarySequence(server, args, "bridge-optimize-check");
   }
   const usageSession = argValue(args, "--session", canary?.sessionID || null);
@@ -1238,6 +1367,7 @@ async function optimizeCheckCommand(args) {
 }
 
 async function askCommand(args) {
+  requireSpendingApproval(args, "ask");
   const mode = argValue(args, "--mode", "review-only");
   if (!["review-only", "patch-proposal"].includes(mode)) {
     throw new Error(`unsupported mode: ${mode}`);
@@ -1248,6 +1378,7 @@ async function askCommand(args) {
     taskPath: path.resolve(taskPath),
     text: fs.readFileSync(path.resolve(taskPath), "utf8"),
   }));
+  const preflight = assertTaskBudget(tasks);
   const server = await selectServer(args);
   const envelope = {
     event: "ask",
@@ -1258,6 +1389,7 @@ async function askCommand(args) {
     taskPaths: tasks.map((task) => task.taskPath),
     turnsRequested: tasks.length,
     chars: tasks.reduce((sum, task) => sum + task.text.length, 0),
+    preflight,
   };
   appendJsonl(inboxPath, envelope);
 
@@ -1343,6 +1475,7 @@ async function mvsSendCommand(args) {
   }
   const port = mvsDaemonPort(args);
   const sessionID = mvsSession(args);
+  assertNotDeniedSession(sessionID, "mvs-send");
   const taskPath = argValue(args, "--task");
   const inline = argValue(args, "--content");
   if (!taskPath && !inline) throw new Error("mvs-send requires --content or --task");

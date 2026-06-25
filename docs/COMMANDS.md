@@ -10,14 +10,17 @@ node .\bridge.mjs status
 node .\bridge.mjs state
 node .\bridge.mjs config show
 npm run install:skill
+npm run install:codex-skill
 ```
 
 - `status`: inspect live Desktop-owned `opencode serve` config.
 - `state`: inspect live server, runtime files, current modes, and recent ledger
   events.
-- `config show`: show effective bridge config plus raw local config.
+- `config show`: show effective bridge config plus redacted raw local config.
 - `install:skill`: install the optional MiniMax slash-palette skill as
   `/bridge`.
+- `install:codex-skill`: install the optional Codex skill as
+  `mavis-minimax-bridge`.
 
 ## MiniMax Slash Skill
 
@@ -25,6 +28,14 @@ Install:
 
 ```powershell
 npm run install:skill
+```
+
+Advanced:
+
+```powershell
+node .\scripts\install-mavis-skill.mjs --dry-run
+node .\scripts\install-mavis-skill.mjs --mavis-root C:\path\to\.mavis\agents\mavis
+node .\scripts\install-mavis-skill.mjs --repo-root C:\path\to\mavis-minimax-bridge
 ```
 
 After MiniMax refreshes its skill index, use:
@@ -43,14 +54,43 @@ After MiniMax refreshes its skill index, use:
 /bridge mode observe
 /bridge mode off
 /bridge estimate
-/bridge ask
-/bridge send mvs_<id>
+/bridge ask <task-file>
+/bridge send mvs_<id> <task-file>
 ```
 
 The slash skill does not add a new daemon. It instructs MiniMax to run the local
 bridge CLI from this repository. `status`, `audit`, `session show`, `mode list`,
 and `estimate` are local-only. `ask`, `send`, `canary`, and `optimize-check`
 without `--skip-canary` can spend tokens and need explicit user approval.
+For `/bridge ask` or `/bridge send`, provide a compact task file or ask MiniMax
+to create one in the bridge repository before it runs the CLI command.
+
+## Codex Skill
+
+Install:
+
+```powershell
+npm run install:codex-skill
+```
+
+Advanced:
+
+```powershell
+node .\scripts\install-codex-skill.mjs --dry-run
+node .\scripts\install-codex-skill.mjs --codex-home C:\path\to\.codex
+node .\scripts\install-codex-skill.mjs --repo-root C:\path\to\mavis-minimax-bridge
+```
+
+Default target:
+
+```text
+%USERPROFILE%\.codex\skills\mavis-minimax-bridge\SKILL.md
+```
+
+After install, Codex can use the skill when the user asks to check bridge
+status, audit token optimization, coordinate with MiniMax, set a session, or run
+a safe review-only bridge task. The Codex skill uses the same CLI commands and
+the same token-spending guardrails as the MiniMax slash skill.
 
 ## Modes
 
@@ -142,10 +182,10 @@ These commands can spend tokens:
 ```powershell
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repeat-long 2
-node .\bridge.mjs canary
-node .\bridge.mjs optimize-check
+node .\bridge.mjs canary --yes
+node .\bridge.mjs optimize-check --yes
 node .\bridge.mjs optimize-check --skip-canary --session mvs_<id>
-node .\bridge.mjs optimize-check --long-prompt .\stable-prefix.local.txt --repeat-long 2
+node .\bridge.mjs optimize-check --yes --long-prompt .\stable-prefix.local.txt --repeat-long 2
 ```
 
 Run `canary-estimate` before any canary that might spend tokens.
@@ -167,9 +207,9 @@ node .\bridge.mjs config set --key includeOptimizationContext --value false
 These commands can spend tokens:
 
 ```powershell
-node .\bridge.mjs ask --mode review-only --task .\task.md
-node .\bridge.mjs ask --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
-node .\bridge.mjs ask --mode patch-proposal --task .\task.md
+node .\bridge.mjs ask --yes --mode review-only --task .\task.md
+node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
+node .\bridge.mjs ask --yes --mode patch-proposal --task .\task.md
 node .\bridge.mjs mvs-send --session mvs_<id> --task .\task.md --yes
 node .\bridge.mjs mvs-send --session mvs_<id> --content "short prompt" --yes
 ```
