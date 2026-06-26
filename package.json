@@ -15,6 +15,7 @@
     "init": "node ./scripts/init-runtime.mjs",
     "install:skill": "node ./scripts/install-mavis-skill.mjs",
     "install:codex-skill": "node ./scripts/install-codex-skill.mjs",
+    "install:codex-slash": "node ./scripts/install-codex-slash.mjs",
     "canary:estimate": "node ./bridge.mjs canary-estimate",
     "prefix:build": "node ./scripts/build-stable-prefix.mjs",
     "status": "node ./bridge.mjs status",

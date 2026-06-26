@@ -11,6 +11,7 @@ node .\bridge.mjs state
 node .\bridge.mjs config show
 npm run install:skill
 npm run install:codex-skill
+npm run install:codex-slash
 ```
 
 - `status`: inspect live Desktop-owned `opencode serve` config.
@@ -21,6 +22,8 @@ npm run install:codex-skill
   `/bridge`.
 - `install:codex-skill`: install the optional Codex skill as
   `mavis-minimax-bridge`.
+- `install:codex-slash`: install the optional Codex CLI custom prompt as
+  `/prompts:bridge`.
 
 ## MiniMax Slash Skill
 
@@ -71,6 +74,7 @@ Install:
 
 ```powershell
 npm run install:codex-skill
+npm run install:codex-slash
 ```
 
 Advanced:
@@ -79,6 +83,8 @@ Advanced:
 node .\scripts\install-codex-skill.mjs --dry-run
 node .\scripts\install-codex-skill.mjs --codex-home C:\path\to\.codex
 node .\scripts\install-codex-skill.mjs --repo-root C:\path\to\mavis-minimax-bridge
+node .\scripts\install-codex-slash.mjs --dry-run
+node .\scripts\install-codex-slash.mjs --codex-home C:\path\to\.codex
 ```
 
 If `CODEX_HOME` is set, the installer writes there automatically and the
@@ -94,6 +100,19 @@ After install, Codex can use the skill when the user asks to check bridge
 status, audit token optimization, coordinate with MiniMax, set a session, or run
 a safe review-only bridge task. The Codex skill uses the same CLI commands and
 the same token-spending guardrails as the MiniMax slash skill.
+
+After `install:codex-slash`, restart Codex CLI and use:
+
+```text
+/prompts:bridge status
+/prompts:bridge audit
+/prompts:bridge mode list
+/prompts:bridge session show
+/prompts:bridge tokens
+```
+
+Current Codex CLI custom prompts live under the `prompts:` namespace, so this
+does not create a root `/bridge` command.
 
 ## Modes
 

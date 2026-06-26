@@ -4,6 +4,8 @@ Initialize local runtime files:
 
 ```powershell
 npm run init
+npm run install:codex-skill
+npm run install:codex-slash
 ```
 
 This creates ignored local files: `config.json`, `ledger.jsonl`, `inbox.jsonl`,
@@ -27,6 +29,14 @@ node .\bridge.mjs optimize-check --skip-canary
 node .\bridge.mjs optimize-check --yes --session mvs_<id>
 node .\bridge.mjs optimize-check --yes --long-prompt .\stable-prefix.txt
 node .\bridge.mjs ask --yes --mode review-only --task .\task.md
+```
+
+After `npm run install:codex-slash`, restart Codex CLI and use:
+
+```text
+/prompts:bridge status
+/prompts:bridge audit
+/prompts:bridge mode list
 ```
 
 Build a realistic local long-prompt file for cache-write canaries:
