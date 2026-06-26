@@ -83,6 +83,10 @@ node .\bridge.mjs canary-estimate
 node .\bridge.mjs optimize-check --skip-canary --session mvs_<id>
 ```
 
+`optimize-check --skip-canary` does not start a model turn. When `--session` is
+provided it still queries `mavis usage session`, so the Mavis CLI must be
+available.
+
 Optional MiniMax GUI slash entry:
 
 ```powershell
@@ -150,7 +154,7 @@ Rules for agents:
 
 - Do not commit or publish `config.json`, `ledger.jsonl`, `inbox.jsonl`, or `outbox.jsonl`.
 - Do not use `mvs-send`, `canary`, `ask`, or `optimize-check` without understanding that they may spend tokens.
-- The CLI requires `--yes` for token-spending bridge commands; `optimize-check --skip-canary` remains local-only.
+- The CLI requires `--yes` for token-spending bridge commands; `optimize-check --skip-canary` does not start a model turn.
 - Prefer `review-only` tasks before asking MiniMax to propose changes.
 - Keep bridge tasks compact and bounded.
 - Treat direct MiniMax prompt-cache savings as unproven unless an A/B run proves
@@ -295,6 +299,8 @@ node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repe
 
 - `ask`, `canary`, `mvs-send`, and full `optimize-check` require `--yes`
   because they start a model turn.
+- `tail` redacts log payloads by default; use `tail --raw` only when you
+  intentionally need exact local JSONL contents.
 - `--long-prompt` is opt-in because it spends more tokens.
 - Put burned, orchestration, or expensive sessions in `denySessions`.
 - `ledger.jsonl`, `inbox.jsonl`, and `outbox.jsonl` are local audit files and

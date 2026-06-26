@@ -22,11 +22,11 @@ node .\bridge.mjs deny-session add --session mvs_<id>
 node .\bridge.mjs token-stats --ledger
 node .\bridge.mjs token-stats --session mvs_<id>
 node .\bridge.mjs canary-estimate
-node .\bridge.mjs canary
-node .\bridge.mjs optimize-check
-node .\bridge.mjs optimize-check --session mvs_<id>
-node .\bridge.mjs optimize-check --long-prompt .\stable-prefix.txt
-node .\bridge.mjs ask --mode review-only --task .\task.md
+node .\bridge.mjs canary --yes
+node .\bridge.mjs optimize-check --skip-canary
+node .\bridge.mjs optimize-check --yes --session mvs_<id>
+node .\bridge.mjs optimize-check --yes --long-prompt .\stable-prefix.txt
+node .\bridge.mjs ask --yes --mode review-only --task .\task.md
 ```
 
 Build a realistic local long-prompt file for cache-write canaries:
@@ -38,7 +38,10 @@ node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repe
 
 Safety notes:
 
-- `mvs-send` requires `--yes` because it starts a model turn.
+- `ask`, `canary`, `mvs-send`, and full `optimize-check` require `--yes`
+  because they start a model turn.
+- Prefer `mvs-send --task`; inline `--content` also requires
+  `--allow-inline-content` because shells can retain command history.
 - `--long-prompt` is opt-in because it intentionally spends more tokens.
 - Put burned, orchestration, or expensive sessions into `denySessions`.
 - `ledger.jsonl`, `inbox.jsonl`, and `outbox.jsonl` are local runtime files and

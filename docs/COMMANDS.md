@@ -180,18 +180,26 @@ system prompt size, tool definitions, or accumulated message history.
 
 ## Canary And Optimization Checks
 
-These commands can spend tokens:
+Local-only estimates and route checks:
 
 ```powershell
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repeat-long 2
+node .\bridge.mjs optimize-check --skip-canary --session mvs_<id>
+```
+
+These commands can spend tokens:
+
+```powershell
 node .\bridge.mjs canary --yes
 node .\bridge.mjs optimize-check --yes
-node .\bridge.mjs optimize-check --skip-canary --session mvs_<id>
 node .\bridge.mjs optimize-check --yes --long-prompt .\stable-prefix.local.txt --repeat-long 2
 ```
 
 Run `canary-estimate` before any canary that might spend tokens.
+`optimize-check --skip-canary` does not start a model turn. With `--session`,
+it still shells out to `mavis usage session`, so the Mavis CLI must be
+available.
 
 Each bridge model turn records `finishReason`, `truncated`, `outputCap`,
 `nearOutputCap`, `cacheStatus`, and `optimizationContext` in the local ledger.
@@ -214,20 +222,24 @@ node .\bridge.mjs ask --yes --mode review-only --task .\task.md
 node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 node .\bridge.mjs ask --yes --mode patch-proposal --task .\task.md
 node .\bridge.mjs mvs-send --session mvs_<id> --task .\task.md --yes
-node .\bridge.mjs mvs-send --session mvs_<id> --content "short prompt" --yes
+node .\bridge.mjs mvs-send --session mvs_<id> --content "short prompt" --allow-inline-content --yes
 ```
 
 Prefer `review-only` first. `mvs-send` requires `--yes` because it posts into a
 target Mavis session. Repeated `--task` values on `ask` are sent as follow-up
 turns in one temporary `ses_...` session and each turn is recorded in the local
 ledger/outbox.
+Prefer `mvs-send --task` over `--content`; inline content can be captured by
+shell history or process inspection.
 
 ## Logs
 
 ```powershell
 node .\bridge.mjs tail
 node .\bridge.mjs tail --lines 50
+node .\bridge.mjs tail --raw
 ```
 
 `ledger.jsonl`, `inbox.jsonl`, and `outbox.jsonl` are local runtime files and
 are ignored by git.
+`tail` redacts sensitive payloads by default; `--raw` prints exact local JSONL.

@@ -48,9 +48,15 @@ function readJson(filePath, fallback) {
   }
 }
 
-const config = { ...defaultConfig(), ...readJson(configPath, {}) };
-config.env = { ...defaultConfig().env, ...(config.env || {}) };
-config.denySessions = Array.isArray(config.denySessions) ? config.denySessions : [];
+function normalizeConfig(input) {
+  const merged = { ...defaultConfig(), ...(input || {}) };
+  merged.env = { ...defaultConfig().env, ...(merged.env || {}) };
+  merged.denySessions = Array.isArray(merged.denySessions) ? [...new Set(merged.denySessions)] : [];
+  validateConfig(merged);
+  return merged;
+}
+
+const config = normalizeConfig(readJson(configPath, {}));
 
 function stableStringify(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -58,9 +64,7 @@ function stableStringify(value) {
 
 function writeConfig(next, reason = "config-write") {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  const merged = { ...defaultConfig(), ...next };
-  merged.env = { ...defaultConfig().env, ...(next.env || {}) };
-  merged.denySessions = Array.isArray(merged.denySessions) ? [...new Set(merged.denySessions)] : [];
+  const merged = normalizeConfig(next);
   fs.writeFileSync(configPath, stableStringify(merged), "utf8");
   Object.keys(config).forEach((key) => delete config[key]);
   Object.assign(config, merged);
@@ -108,8 +112,9 @@ function usage() {
   node .\\bridge.mjs mvs-status [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-peers [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
-  node .\\bridge.mjs mvs-send --content <text>|--task <file> --yes [--session <mvs-id>] [--daemon-port <port>]
-  node .\\bridge.mjs tail [--lines <n>]
+  node .\\bridge.mjs mvs-send --task <file> --yes [--session <mvs-id>] [--daemon-port <port>]
+  node .\\bridge.mjs mvs-send --content <text> --allow-inline-content --yes [--session <mvs-id>] [--daemon-port <port>]
+  node .\\bridge.mjs tail [--lines <n>] [--raw]
   node .\\bridge.mjs stop`);
 }
 
@@ -139,7 +144,7 @@ $items = Get-CimInstance Win32_Process |
         parentPid = $_.ParentProcessId
         parentName = if ($parent) { $parent.Name } else { $null }
         port = [int]$m.Groups[1].Value
-        commandLine = $_.CommandLine
+        hasCommandLine = [bool]$_.CommandLine
       }
     }
   }
@@ -240,6 +245,12 @@ function isDeniedSession(sessionID) {
 function assertNotDeniedSession(sessionID, action) {
   if (isDeniedSession(sessionID)) {
     throw new Error(`refusing ${action} for denied session ${sessionID}`);
+  }
+}
+
+function assertMvsSessionID(sessionID, action = "session") {
+  if (!sessionID || !/^mvs_[A-Za-z0-9_-]+$/.test(String(sessionID))) {
+    throw new Error(`${action} requires --session mvs_<id>`);
   }
 }
 
@@ -351,6 +362,11 @@ function assertUsableServer(server) {
   if (server.config?.model !== requiredModel()) {
     throw new Error(`main model mismatch: expected ${requiredModel()}, got ${server.config?.model}`);
   }
+  const requiredProvider = config.requireProvider || providerFromModel(requiredModel());
+  const actualProvider = providerFromModel(server.config?.model);
+  if (requiredProvider && actualProvider !== requiredProvider) {
+    throw new Error(`main provider mismatch: expected ${requiredProvider}, got ${actualProvider || "unknown"}`);
+  }
 }
 
 function requiredModel() {
@@ -362,8 +378,8 @@ async function selectServer(args) {
   const servers = await liveServers();
   const selected = requestedPort
     ? servers.find((s) => String(s.port) === String(requestedPort))
-    : servers.find((s) => s.parentName === "MiniMax Code.exe" && s.config?.model === config.requireModel) ||
-      servers.find((s) => s.config?.model === config.requireModel) ||
+    : servers.find((s) => s.parentName === "MiniMax Code.exe" && s.config?.model === requiredModel()) ||
+      servers.find((s) => s.config?.model === requiredModel()) ||
       servers[0];
   assertUsableServer(selected);
   return selected;
@@ -393,6 +409,8 @@ function mvsDaemonPort(args) {
 function mvsSession(args) {
   const sessionID = argValue(args, "--session", config.currentMavisSession || null);
   if (!sessionID) throw new Error("--session is required unless config.currentMavisSession is set");
+  assertMvsSessionID(sessionID);
+  assertNotDeniedSession(sessionID, "session access");
   return sessionID;
 }
 
@@ -403,6 +421,18 @@ function mvsBase(port) {
 async function fetchMavisJson(pathname, options = {}, timeoutSec = 60) {
   const port = options.port || config.mavisDaemonPort || 15321;
   return await fetchJsonWithTimeout(`${mvsBase(port)}${pathname}`, options.fetchOptions || {}, timeoutSec);
+}
+
+async function verifyMavisSession(port, sessionID, options = {}) {
+  assertMvsSessionID(sessionID);
+  assertNotDeniedSession(sessionID, options.action || "session access");
+  const statusID = options.statusID || sessionID;
+  const status = await fetchMavisJson(`/session/${encodeURIComponent(statusID)}`, { port }, 15);
+  const resolvedSession = status?.session?.sessionId || null;
+  if (resolvedSession && resolvedSession !== sessionID && !options.allowMismatch) {
+    throw new Error(`session mismatch: requested ${sessionID}, resolved ${resolvedSession}`);
+  }
+  return { statusID, status, resolvedSession };
 }
 
 async function createSession(port, title) {
@@ -419,8 +449,9 @@ async function createSession(port, title) {
 
 async function sendPrompt(port, sessionID, text, options = {}) {
   const promptText = addOptimizationContext(text, options);
+  const requestedModel = options.model || requiredModel();
   const body = {
-    model: modelSpec(options.model || config.defaultModel),
+    model: modelSpec(requestedModel),
     noReply: Boolean(options.noReply),
     parts: [{ type: "text", text: promptText }],
   };
@@ -485,7 +516,7 @@ function cacheStatus(cacheRead, cacheWrite) {
 
 function optimizationContext(options = {}) {
   const role = options.role || "main";
-  const route = options.model || config.defaultModel || requiredModel();
+  const route = options.model || requiredModel();
   const outputCap = roleOutputCap(role);
   return {
     input_truncated: Boolean(options.inputTruncated),
@@ -536,7 +567,7 @@ function turnSummary(result, options = {}) {
     cacheStatus: cacheStatus(cacheRead, cacheWrite),
     optimizationContext: optimizationContext({
       role,
-      model: parseModelRef(info.providerID, info.modelID) || options.model || config.defaultModel,
+      model: parseModelRef(info.providerID, info.modelID) || options.model || requiredModel(),
       cacheStatus: cacheStatus(cacheRead, cacheWrite),
       lastResponseTruncated: options.lastResponseTruncated,
     }),
@@ -631,7 +662,6 @@ function extractSignalsFromMessages(messages) {
 async function runCanarySequence(server, args, titlePrefix) {
   const session = await createSession(server.port, `${titlePrefix}-${Date.now()}`);
   const sessionID = session.id;
-  assertNotDeniedSession(sessionID, "canary");
   const prompts = canaryPrompts(args);
 
   const timeoutSec = Math.min(config.maxWallClockSec || 180, 75);
@@ -695,6 +725,9 @@ function readUsage(sessionID) {
   if (!sessionID) return { skipped: true, reason: "no session id" };
   if (!String(sessionID).startsWith("mvs_")) {
     return { skipped: true, sessionID, reason: "not a Mavis session id; pass --session mvs_<id> to collect mavis usage" };
+  }
+  if (isDeniedSession(sessionID)) {
+    return { skipped: true, sessionID, reason: "session is denied" };
   }
   try {
     const usage = runJson(mavisCli(), ["usage", "session", sessionID, "--json"]);
@@ -885,8 +918,22 @@ function validateConfig(configObject) {
   validateNumberRange(configObject, "tinyCanaryInputEstimateTokens", 1, 1000000);
   validateNumberRange(configObject, "maxLongPromptChars", 100, 1000000);
   validateNumberRange(configObject, "maxLongPromptRepeats", 1, 10);
-  if (configObject.currentMavisSession && !String(configObject.currentMavisSession).startsWith("mvs_")) {
+  if (typeof configObject.defaultModel !== "string" || !configObject.defaultModel.trim()) {
+    throw new Error("defaultModel must be a non-empty string");
+  }
+  if (typeof configObject.requireModel !== "string" || !configObject.requireModel.trim()) {
+    throw new Error("requireModel must be a non-empty string");
+  }
+  if (configObject.requireProvider !== null && configObject.requireProvider !== undefined && typeof configObject.requireProvider !== "string") {
+    throw new Error("requireProvider must be a string or null");
+  }
+  if (configObject.currentMavisSession && !/^mvs_[A-Za-z0-9_-]+$/.test(String(configObject.currentMavisSession))) {
     throw new Error("currentMavisSession must be null or mvs_<id>");
+  }
+  for (const sessionID of configObject.denySessions || []) {
+    if (!/^mvs_[A-Za-z0-9_-]+$/.test(String(sessionID))) {
+      throw new Error("denySessions entries must be mvs_<id>");
+    }
   }
   if (typeof configObject.asciiConsole !== "boolean") throw new Error("asciiConsole must be boolean");
   if (typeof configObject.includeOptimizationContext !== "boolean") throw new Error("includeOptimizationContext must be boolean");
@@ -1270,7 +1317,8 @@ function sessionCommand(args) {
   const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };
   if (sub === "set") {
     const sessionID = argValue(args, "--session");
-    if (!sessionID || !String(sessionID).startsWith("mvs_")) throw new Error("session set requires --session mvs_<id>");
+    assertMvsSessionID(sessionID, "session set");
+    assertNotDeniedSession(sessionID, "session set");
     next.currentMavisSession = sessionID;
   } else if (sub === "clear") {
     next.currentMavisSession = null;
@@ -1288,6 +1336,7 @@ function denySessionCommand(args) {
   }
   const sessionID = argValue(args, "--session");
   if (!sessionID) throw new Error(`${sub} requires --session <id>`);
+  assertMvsSessionID(sessionID, `deny-session ${sub}`);
   const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };
   if (sub === "add") {
     next.denySessions = [...new Set([...next.denySessions, sessionID])];
@@ -1439,11 +1488,11 @@ async function mvsStatusCommand(args) {
   const port = mvsDaemonPort(args);
   const sessionID = mvsSession(args);
   const statusID = argValue(args, "--opencode-session", sessionID);
-  const status = await fetchMavisJson(`/session/${encodeURIComponent(statusID)}`, { port }, 15);
-  const resolvedSession = status?.session?.sessionId || null;
-  if (resolvedSession && resolvedSession !== sessionID && !args.includes("--allow-mismatch")) {
-    throw new Error(`mvs-status mismatch: requested ${sessionID}, resolved ${resolvedSession}`);
-  }
+  const { status } = await verifyMavisSession(port, sessionID, {
+    statusID,
+    allowMismatch: args.includes("--allow-mismatch"),
+    action: "mvs-status",
+  });
   const out = { event: "mvs-status", port, requestedSession: sessionID, statusID, status };
   appendJsonl(ledgerPath, out);
   printJson(out);
@@ -1452,6 +1501,7 @@ async function mvsStatusCommand(args) {
 async function mvsPeersCommand(args) {
   const port = mvsDaemonPort(args);
   const sessionID = mvsSession(args);
+  await verifyMavisSession(port, sessionID, { action: "mvs-peers" });
   const peers = await fetchMavisJson(`/communication/peers?sessionId=${encodeURIComponent(sessionID)}`, { port }, 15);
   const out = { event: "mvs-peers", port, sessionID, peers };
   appendJsonl(ledgerPath, out);
@@ -1461,6 +1511,7 @@ async function mvsPeersCommand(args) {
 async function mvsMessagesCommand(args) {
   const port = mvsDaemonPort(args);
   const sessionID = mvsSession(args);
+  await verifyMavisSession(port, sessionID, { action: "mvs-messages" });
   const limit = Number(argValue(args, "--limit", "10"));
   const query = `toSession=${encodeURIComponent(sessionID)}&limit=${encodeURIComponent(String(limit))}`;
   const messages = await fetchMavisJson(`/communication/messages?${query}`, { port }, 15);
@@ -1475,10 +1526,13 @@ async function mvsSendCommand(args) {
   }
   const port = mvsDaemonPort(args);
   const sessionID = mvsSession(args);
-  assertNotDeniedSession(sessionID, "mvs-send");
   const taskPath = argValue(args, "--task");
   const inline = argValue(args, "--content");
   if (!taskPath && !inline) throw new Error("mvs-send requires --content or --task");
+  if (inline && !args.includes("--allow-inline-content")) {
+    throw new Error("mvs-send --content requires --allow-inline-content; prefer --task to avoid shell history leaks");
+  }
+  await verifyMavisSession(port, sessionID, { action: "mvs-send" });
   const content = taskPath ? fs.readFileSync(path.resolve(taskPath), "utf8") : inline;
   const maxChars = Number(config.mvsMaxSendChars || 4000);
   if (content.length > maxChars) {
@@ -1511,13 +1565,34 @@ function cryptoRandomID() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function redactedLogValue(value, key = "") {
+  if (value === null || value === undefined) return value;
+  if (/session|message|prompt|answer|content|text|commandLine|raw|status|result/i.test(String(key))) {
+    if (typeof value === "string") return value ? "[redacted]" : value;
+    if (Array.isArray(value)) return `[redacted ${value.length} items]`;
+    if (typeof value === "object") return "[redacted object]";
+  }
+  if (Array.isArray(value)) return value.map((item) => redactedLogValue(item));
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, redactedLogValue(childValue, childKey)]));
+  }
+  return value;
+}
+
+function redactLogLine(line) {
+  const parsed = readJsonFromString(line, null);
+  if (!parsed) return line.replace(/mvs_[A-Za-z0-9_-]+/g, "mvs_[redacted]");
+  return JSON.stringify(redactedLogValue(parsed));
+}
+
 function tailCommand(args) {
   const lines = Number(argValue(args, "--lines", "20"));
+  const raw = args.includes("--raw");
   for (const filePath of [ledgerPath, outboxPath]) {
     console.log(`\n== ${path.basename(filePath)} ==`);
     if (!fs.existsSync(filePath)) continue;
     const content = fs.readFileSync(filePath, "utf8").trim().split(/\r?\n/).slice(-lines);
-    for (const line of content) console.log(line);
+    for (const line of content) console.log(raw ? line : redactLogLine(line));
   }
 }
 
