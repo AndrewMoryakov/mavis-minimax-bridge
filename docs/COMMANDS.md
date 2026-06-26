@@ -81,6 +81,9 @@ node .\scripts\install-codex-skill.mjs --codex-home C:\path\to\.codex
 node .\scripts\install-codex-skill.mjs --repo-root C:\path\to\mavis-minimax-bridge
 ```
 
+If `CODEX_HOME` is set, the installer writes there automatically and the
+`--codex-home` flag can override it.
+
 Default target:
 
 ```text

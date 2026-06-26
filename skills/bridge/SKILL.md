@@ -5,7 +5,8 @@ description: >-
   types /bridge or asks to connect Codex and MiniMax, inspect bridge state,
   audit token optimization, set a Mavis session, change bridge modes, or run a
   safe collaboration review. Commands: /bridge status, /bridge audit,
-  /bridge session, /bridge mode, /bridge ask, /bridge help.
+  /bridge session, /bridge mode, /bridge estimate, /bridge ask, /bridge send,
+  /bridge help.
 ---
 
 # Bridge Control

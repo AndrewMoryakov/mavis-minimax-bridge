@@ -36,7 +36,7 @@ Default target:
 const codexHome = path.resolve(args.get("codex-home") ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"));
 const target = path.join(codexHome, "skills", "mavis-minimax-bridge", "SKILL.md");
 const dryRun = args.has("dry-run");
-const repoRoot = path.resolve(args.get("repo-root") ?? process.cwd());
+const repoRoot = path.resolve(args.get("repo-root") ?? scriptRepoRoot);
 
 if (!fs.existsSync(source)) {
   console.error(`source missing: ${source}`);

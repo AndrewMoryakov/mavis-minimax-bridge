@@ -38,7 +38,7 @@ const mavisRoot = path.resolve(
 );
 const target = path.join(mavisRoot, "skills", "bridge", "SKILL.md");
 const dryRun = args.has("dry-run");
-const repoRoot = path.resolve(args.get("repo-root") ?? process.cwd());
+const repoRoot = path.resolve(args.get("repo-root") ?? scriptRepoRoot);
 
 if (!fs.existsSync(source)) {
   console.error(`source missing: ${source}`);
