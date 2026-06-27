@@ -24,13 +24,16 @@ Rules:
   needed for the MiniMax side; packets are projections, not relay state.
 - Use `duet step --agent minimax --dry-run` before any real MiniMax duet step;
   it is local-only and token-free.
+- Use `duet step --agent minimax --yes` only after explicit token-spending
+  approval; it runs one review-only MiniMax relay turn and applies the handoff.
 - Use token-spending commands only after explicit user approval.
 - Never send to a guessed, burned, denied, or expensive `mvs_...` session.
 - Prefer review-only collaboration before asking MiniMax for patch proposals.
 - `ask` attaches bounded local Git source context for dirty worktrees by
   default; use `--dry-run --raw` to inspect it without spending tokens.
-- Duet Relay commands are local-only. Use them for baton-passing state, not for
-  sending prompts to MiniMax.
+- Duet Relay commands are local-only except for explicit
+  `duet step --agent minimax --yes`. Use relay commands for baton-passing
+  state, not arbitrary MiniMax prompts.
 - Duet Relay does not wake, message, or activate the other agent automatically.
 - Duet output is redacted by default; use `--raw` only when the user explicitly
   needs local goal, handoff, or journal text in stdout.

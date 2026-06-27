@@ -282,6 +282,19 @@ node .\bridge.mjs duet step --agent minimax --dry-run
 iteration limits, packet size, route/model, and estimated input tokens. It does
 not call MiniMax, write a model handoff, or advance the baton.
 
+Run one real MiniMax relay step:
+
+```powershell
+node .\bridge.mjs duet step --agent minimax --yes
+```
+
+`duet step --agent minimax --yes` is token-spending. It sends the bounded packet
+through the review-only model path, stores MiniMax's answer as a pending local
+handoff, applies it through the same hardened `duet pass` validation, and
+redacts the answer in stdout unless `--raw` is passed. If apply fails, the baton
+is not advanced and the pending `.local.md` handoff path is reported for manual
+recovery.
+
 Run a local verifier through the bridge:
 
 ```powershell
@@ -324,8 +337,8 @@ Operational rules:
 - `duet pass --handoff` accepts only regular files inside the bridge root.
 - `--max-iterations` is a safety limit; when reached, the relay stops with
   `human_escalation`.
-- Duet commands are local-only and do not call MiniMax. Sending work to MiniMax
-  remains an explicit separate step through `ask` or `mvs-send`.
+- Duet commands are local-only except for explicit
+  `duet step --agent minimax --yes`, which can call MiniMax and spend tokens.
 - Duet Relay does not wake, message, or activate the other agent automatically.
 
 Rules for agents:

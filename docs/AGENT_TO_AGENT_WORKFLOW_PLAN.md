@@ -414,3 +414,7 @@ Update:
 - Phase 4B.1 `duet step --agent minimax --dry-run`: implemented with
   status/baton/max-iteration validation, route/model and token estimate,
   redacted default output, raw prompt opt-in, docs, and tests.
+- Phase 4B.2 `duet step --agent minimax --yes`: implemented for one
+  review-only MiniMax turn with async Duet lock, pending/applied local handoff
+  files, hardened `duet pass` application, redacted default output, fake-model
+  offline tests, and pending recovery on apply failure.

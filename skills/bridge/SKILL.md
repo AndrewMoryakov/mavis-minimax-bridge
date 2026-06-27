@@ -25,8 +25,9 @@ Always run commands from that directory.
 - `duet init`, `duet show`, `duet next`, `duet packet export`,
   `duet step --dry-run`, `duet pass`, and `duet note` are local-only
   coordination commands. They do not call MiniMax.
-- `ask`, `canary`, `optimize-check` without `--skip-canary`, and `mvs-send`
-  can spend tokens. Ask for explicit user approval before running them.
+- `ask`, `canary`, `optimize-check` without `--skip-canary`, `mvs-send`, and
+  `duet step --agent minimax --yes` can spend tokens. Ask for explicit user
+  approval before running them.
 - Never send to a burned or denied `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
 - `ask` automatically attaches bounded local Git source context for dirty
@@ -59,6 +60,7 @@ node .\bridge.mjs duet show
 node .\bridge.mjs duet next
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
+node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 ```
@@ -194,6 +196,18 @@ node .\bridge.mjs duet step --agent minimax --dry-run
 
 Preview a future MiniMax step without spending tokens. It validates baton,
 status, packet size, route/model, and estimated input tokens.
+
+### `/bridge duet step minimax`
+
+Run only after explicit token-spending approval:
+
+```powershell
+node .\bridge.mjs duet step --agent minimax --yes
+```
+
+Runs one review-only MiniMax relay turn, stores the answer as a pending local
+handoff, applies it through hardened `duet pass`, and redacts the answer unless
+`--raw` is explicitly passed.
 
 ### `/bridge duet transcript export`
 

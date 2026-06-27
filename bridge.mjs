@@ -146,7 +146,7 @@ function usage() {
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
   node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
-  node .\\bridge.mjs duet step --agent minimax --dry-run [--raw] [--max-packet-chars <n>]
+  node .\\bridge.mjs duet step --agent minimax --dry-run|--yes [--raw] [--max-packet-chars <n>] [--port <port>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
@@ -2351,6 +2351,10 @@ function textDigest(text) {
   return createHash("sha256").update(text).digest("hex");
 }
 
+function safeFileTimestamp(ts = now()) {
+  return ts.replace(/[^0-9A-Za-z_-]/g, "-");
+}
+
 function textSummary(text) {
   return {
     chars: text.length,
@@ -2786,7 +2790,9 @@ function duetStepReviewPrompt(packetText) {
     "Do not claim that you executed local commands unless the packet says they were executed.",
     "Do not ask the human to approve routine continuation; escalate only for a real human decision.",
     "",
-    "Return a concise handoff with one of these statuses as plain text: running, done, human_escalation.",
+    "Start the handoff with exactly one status line: `Status: running`, `Status: done`, or `Status: human_escalation`.",
+    "After the status line, include concise reasoning, findings, next steps, and any files or commands the next agent should inspect.",
+    "For `Status: running`, the bridge will pass the baton back to Codex.",
     "",
     "## Duet Packet",
     "",
@@ -2806,14 +2812,133 @@ function assertDuetStepPreconditions(state, agent) {
   }
 }
 
+function parseDuetStepStatus(answer) {
+  const text = String(answer || "");
+  const explicit = text.match(/^\s*status\s*:\s*(running|done|human_escalation)\b/im);
+  if (explicit) return explicit[1].toLowerCase();
+  const bare = text.match(/^\s*(running|done|human_escalation)\b/im);
+  return bare ? bare[1].toLowerCase() : "running";
+}
+
+function duetStepHandoffPath(agent, suffix, ts = now()) {
+  return path.join(bridgeDir, `.duet-step-${agent}-${safeFileTimestamp(ts)}.${suffix}.local.md`);
+}
+
+function fakeModelReplyFromEnv() {
+  if (process.env.MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY !== "1") return null;
+  if (process.env.MAVIS_BRIDGE_TEST_MODEL_REPLY === undefined) return null;
+  return String(process.env.MAVIS_BRIDGE_TEST_MODEL_REPLY);
+}
+
+function publicModelTurns(turns, raw) {
+  if (raw) return turns;
+  return turns.map((turn) => {
+    const { answer, reply, ...rest } = turn;
+    return rest;
+  });
+}
+
+async function runDuetReviewOnlyTurn(args, promptText, envelope) {
+  const preflight = assertTaskBudget([{ taskPath: envelope.taskPath || "duet-step", text: promptText }]);
+  const id = envelope.id || cryptoRandomID();
+  const request = {
+    event: envelope.event || "duet-step-request",
+    id,
+    mode: "review-only",
+    chars: promptText.length,
+    preflight,
+    ...envelope,
+  };
+  appendJsonl(inboxPath, request);
+
+  const fakeReply = fakeModelReplyFromEnv();
+  if (fakeReply !== null) {
+    const route = requiredModel();
+    const [providerID, ...modelParts] = route.split("/");
+    const turn = {
+      index: 1,
+      taskPath: request.taskPath || null,
+      chars: promptText.length,
+      providerID,
+      modelID: modelParts.join("/"),
+      inputTokens: estimateInputTokensForText(addOptimizationContext(promptText, { role: "main" })),
+      outputTokens: estimateInputTokensForText(fakeReply),
+      cacheWrite: 0,
+      cacheRead: 0,
+      finishReason: "test",
+      truncated: false,
+      outputCap: roleOutputCap("main"),
+      outputCapRatio: 0,
+      nearOutputCap: false,
+      cacheStatus: "none",
+      optimizationContext: optimizationContext({ role: "main", model: route, cacheStatus: "none" }),
+      reply: fakeReply.slice(0, 200),
+      answer: fakeReply.slice(-12000),
+    };
+    return {
+      ...request,
+      port: null,
+      sessionID: "test-duet-step",
+      signals: {
+        providerMinimax: providerID === "minimax",
+        agentMinimaxUrl: false,
+        promptCachePatched: false,
+        unauthorized: false,
+        cacheWrite: 0,
+        cacheRead: 0,
+        inputTokens: turn.inputTokens,
+        outputTokens: turn.outputTokens,
+        unknownFinishReason: 0,
+        truncated: 0,
+      },
+      turns: [turn],
+      answer: fakeReply,
+      provider: providerID,
+      role: "main",
+      model: route,
+      entries: [normalizedTurnEntry(turn, { model: route }, { role: "main" })],
+    };
+  }
+
+  const server = await selectServer(args);
+  const session = await createSession(server.port, `bridge-duet-step-${Date.now()}`);
+  const timeoutSec = config.maxWallClockSec || 180;
+  const result = await sendPrompt(server.port, session.id, promptText, {
+    timeoutSec,
+    role: "main",
+  });
+  const answer = assistantText(result);
+  const summary = turnSummary(result, { role: "main" });
+  const turn = {
+    index: 1,
+    taskPath: request.taskPath || null,
+    chars: promptText.length,
+    ...summary,
+    answer: answer.slice(-12000),
+  };
+  const signals = extractSignalsFromMessages([result]);
+  return {
+    ...request,
+    port: server.port,
+    sessionID: session.id,
+    signals,
+    turns: [turn],
+    answer,
+    provider: turn.providerID || "minimax",
+    role: "main",
+    model: parseModelRef(turn.providerID, turn.modelID) || requiredModel(),
+    entries: [normalizedTurnEntry(turn, server.config, { role: "main" })],
+  };
+}
+
 function duetStepDryRun(args) {
   const raw = args.includes("--raw");
   if (!args.includes("--dry-run")) {
-    if (args.includes("--yes")) throw new Error("duet step --yes is not implemented in Phase 4B.1; use --dry-run");
-    throw new Error("duet step requires --dry-run in Phase 4B.1");
+    if (args.includes("--yes")) throw new Error("duet step --yes requires the live step path; do not combine it with --dry-run");
+    throw new Error("duet step requires --dry-run or --yes");
   }
   const agent = requireDuetAgent(argValue(args, "--agent"), "--agent");
-  if (agent !== "minimax") throw new Error("--agent minimax is the only supported duet step target in Phase 4B.1");
+  if (agent !== "minimax") throw new Error("--agent minimax is the only supported duet step target in Phase 4B.2");
   const state = readDuetState();
   readDuetJournal();
   assertDuetStepPreconditions(state, agent);
@@ -2880,6 +3005,122 @@ function duetStepDryRun(args) {
     prompt: promptDetails,
     state: publicDuetState(state),
   });
+}
+
+async function duetStepLive(args) {
+  const raw = args.includes("--raw");
+  if (!args.includes("--yes")) throw new Error("duet step requires --dry-run or --yes in Phase 4B.2");
+  if (args.includes("--dry-run")) throw new Error("duet step accepts either --dry-run or --yes, not both");
+  if (args.includes("--force")) throw new Error("duet step does not support --force");
+  requireSpendingApproval(args, "duet step");
+  const agent = requireDuetAgent(argValue(args, "--agent"), "--agent");
+  if (agent !== "minimax") throw new Error("--agent minimax is the only supported duet step target in Phase 4B.2");
+  const stateBefore = readDuetState();
+  const stateBeforeText = fs.readFileSync(duetStatePath, "utf8");
+  const journalBeforeText = readDuetJournal();
+  assertDuetStepPreconditions(stateBefore, agent);
+  const configuredMax = Number(config.duetPacketMaxChars || 60000);
+  const maxPacketChars = positiveIntegerArg(args, "--max-packet-chars", String(configuredMax));
+  const maxLongPromptChars = Number(config.maxLongPromptChars || 160000);
+  if (maxPacketChars > maxLongPromptChars) {
+    throw new Error(`--max-packet-chars must be <= maxLongPromptChars=${maxLongPromptChars}`);
+  }
+
+  const rawPacket = createBoundedDuetPacket(agent, true, "markdown", maxPacketChars);
+  const promptText = duetStepReviewPrompt(rawPacket.rendered);
+  const modelRun = await runDuetReviewOnlyTurn(args, promptText, {
+    event: "duet-step-request",
+    agent,
+    taskPath: "duet-step:minimax",
+    packet: {
+      maxChars: maxPacketChars,
+      rawChars: rawPacket.rendered.length,
+      rawSha256: textDigest(rawPacket.rendered),
+      rawOverBudget: rawPacket.payload.packet.overBudget,
+    },
+  });
+
+  const answer = modelRun.answer || "";
+  const status = parseDuetStepStatus(answer);
+  const ts = now();
+  const pendingPath = duetStepHandoffPath(agent, "pending", ts);
+  const appliedPath = duetStepHandoffPath(agent, "applied", ts);
+  fs.writeFileSync(pendingPath, answer.trim() || "Status: running\n\nMiniMax returned an empty handoff.", "utf8");
+
+  const stepEventBase = {
+    event: "duet-step",
+    id: modelRun.id,
+    agent,
+    mode: "review-only",
+    tokenSpending: true,
+    sessionID: modelRun.sessionID,
+    port: modelRun.port,
+    provider: modelRun.provider,
+    role: modelRun.role,
+    model: modelRun.model,
+    status,
+    pendingPath,
+    turns: publicModelTurns(modelRun.turns, raw),
+    entries: modelRun.entries,
+    signals: modelRun.signals,
+    packet: raw ? {
+      maxChars: maxPacketChars,
+      rawChars: rawPacket.rendered.length,
+      rawSha256: textDigest(rawPacket.rendered),
+      rawOverBudget: rawPacket.payload.packet.overBudget,
+    } : {
+      maxChars: maxPacketChars,
+      rawOverBudget: rawPacket.payload.packet.overBudget,
+    },
+  };
+
+  let passResult = null;
+  try {
+    const passArgs = status === "running"
+      ? ["--from", agent, "--to", nextDuetAgent(agent), "--handoff", pendingPath]
+      : ["--from", agent, "--status", status, "--handoff", pendingPath];
+    passResult = duetPassCommand(passArgs, { print: false });
+  } catch (error) {
+    writeTextAtomic(duetStatePath, stateBeforeText);
+    writeTextAtomic(duetJournalPath, journalBeforeText);
+    const out = {
+      ...stepEventBase,
+      applyStatus: "apply_failed",
+      error: error.message,
+      answer: raw ? answer : undefined,
+      answerSummary: textSummary(answer),
+      state: publicDuetState(stateBefore),
+    };
+    appendJsonl(ledgerPath, out);
+    appendJsonl(outboxPath, out);
+    printJson(out);
+    process.exitCode = 1;
+    return;
+  }
+
+  let finalAppliedPath = appliedPath;
+  let renameWarning = null;
+  try {
+    fs.renameSync(pendingPath, appliedPath);
+  } catch (error) {
+    finalAppliedPath = null;
+    renameWarning = `handoff applied but pending file was not renamed: ${error.message}`;
+  }
+  {
+    const out = {
+      ...stepEventBase,
+      applyStatus: "applied",
+      appliedPath: finalAppliedPath,
+      pendingPath: finalAppliedPath ? null : pendingPath,
+      warning: renameWarning,
+      answer: raw ? answer : undefined,
+      answerSummary: textSummary(answer),
+      state: publicDuetState(passResult.state),
+    };
+    appendJsonl(ledgerPath, out);
+    appendJsonl(outboxPath, out);
+    printJson(out);
+  }
 }
 
 function appendDuetJournal(markdown) {
@@ -3155,6 +3396,45 @@ function withDuetLock(callback) {
   }
 }
 
+async function withDuetLockAsync(callback) {
+  let handle = null;
+  let heartbeat = null;
+  try {
+    if (fs.existsSync(duetLockPath)) {
+      const stats = fs.statSync(duetLockPath);
+      if (Date.now() - stats.mtimeMs > duetLockStaleMs) {
+        fs.unlinkSync(duetLockPath);
+      }
+    }
+    handle = fs.openSync(duetLockPath, "wx");
+    fs.writeFileSync(handle, stableStringify({ pid: process.pid, createdAt: now(), async: true }), "utf8");
+    heartbeat = setInterval(() => {
+      try {
+        const time = new Date();
+        fs.utimesSync(duetLockPath, time, time);
+      } catch (_) {
+        // Best-effort heartbeat; final unlink still owns cleanup.
+      }
+    }, Math.min(30000, Math.max(1000, Math.floor(duetLockStaleMs / 4))));
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      throw new Error("duet lock is held by another command; retry after it finishes");
+    }
+    throw error;
+  }
+  try {
+    return await callback();
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+    if (handle !== null) fs.closeSync(handle);
+    try {
+      fs.unlinkSync(duetLockPath);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+}
+
 function duetInitCommand(args) {
   if ((fs.existsSync(duetStatePath) || fs.existsSync(duetJournalPath)) && !args.includes("--force")) {
     throw new Error("duet state already exists; use --force to reinitialize");
@@ -3193,7 +3473,7 @@ function duetShowCommand(args) {
   printDuetEvent("duet-show", state, args, extra);
 }
 
-function duetPassCommand(args) {
+function duetPassCommand(args, options = {}) {
   const state = readDuetState();
   const from = requireDuetAgent(argValue(args, "--from"), "--from");
   if (state.status !== "running" && !args.includes("--force")) {
@@ -3236,7 +3516,8 @@ function duetPassCommand(args) {
   };
   writeDuetState(nextState);
   appendJsonl(ledgerPath, { event: "duet-pass", from, to: baton, status: nextStatus, iteration: nextState.iteration });
-  printDuetEvent("duet-pass", nextState, args);
+  if (options.print !== false) printDuetEvent("duet-pass", nextState, args);
+  return { event: "duet-pass", state: nextState };
 }
 
 function duetNoteCommand(args) {
@@ -3259,7 +3540,7 @@ async function duetCommand(args) {
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
   node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
-  node .\\bridge.mjs duet step --agent minimax --dry-run [--raw] [--max-packet-chars <n>]
+  node .\\bridge.mjs duet step --agent minimax --dry-run|--yes [--raw] [--max-packet-chars <n>] [--port <port>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
@@ -3270,7 +3551,10 @@ async function duetCommand(args) {
   if (subcommand === "show") return duetShowCommand(rest);
   if (subcommand === "next") return duetNextCommand(rest);
   if (subcommand === "packet") return duetPacketExport(rest);
-  if (subcommand === "step") return duetStepDryRun(rest);
+  if (subcommand === "step") {
+    if (rest.includes("--dry-run")) return duetStepDryRun(rest);
+    return await withDuetLockAsync(() => duetStepLive(rest));
+  }
   if (subcommand === "transcript") {
     const [action, ...actionRest] = rest;
     if (action === "export") return duetTranscriptExport(actionRest);

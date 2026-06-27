@@ -56,6 +56,11 @@ function ok(result) {
   return JSON.parse(result.stdout);
 }
 
+function jsonOutput(result) {
+  assert.ok(result.stdout.trim(), result.text);
+  return JSON.parse(result.stdout);
+}
+
 function fails(result, pattern) {
   assert.notEqual(result.status, 0, result.text);
   assert.match(result.text, pattern);
@@ -259,7 +264,7 @@ test("duet step minimax dry-run validates baton, estimates prompt, and spends no
 
   ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "3"]));
   fails(runBridge(dir, ["duet", "step", "--agent", "minimax", "--dry-run"]), /baton is held by codex/);
-  fails(runBridge(dir, ["duet", "step", "--agent", "minimax", "--yes"]), /--yes is not implemented/);
+  fails(runBridge(dir, ["duet", "step", "--agent", "minimax", "--yes"]), /baton is held by codex/);
   ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
 
   const ledgerBefore = fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8");
@@ -315,6 +320,99 @@ test("duet step minimax dry-run rejects terminal and max-iteration states", (t) 
   writeFile(limitDir, "goal.md", "Limit step goal");
   ok(runBridge(limitDir, ["duet", "init", "--goal", "goal.md", "--baton", "minimax", "--max-iterations", "1"]));
   fails(runBridge(limitDir, ["duet", "step", "--agent", "minimax", "--dry-run"]), /maxIterations reached/);
+});
+
+test("duet step minimax yes applies a fake review-only handoff without leaking by default", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_STEP_LIVE_123";
+  writeFile(dir, "goal.md", `Live step goal ${secret}`);
+  writeFile(dir, "handoff.md", `Codex handoff ${secret}`);
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: running\n\nMiniMax reviewed the task and found ${secret}. Pass back to Codex.`,
+  };
+  const result = ok(runBridge(dir, ["duet", "step", "--agent", "minimax", "--yes"], { env }));
+  assert.equal(result.event, "duet-step");
+  assert.equal(result.applyStatus, "applied");
+  assert.equal(result.tokenSpending, true);
+  assert.equal(result.sessionID, "test-duet-step");
+  assert.equal(result.status, "running");
+  assert.equal(result.pendingPath, null);
+  assert.equal(typeof result.appliedPath, "string");
+  assert.equal(result.answer, undefined);
+  assert.equal(result.packet.rawSha256, undefined);
+  assert.equal(result.packet.rawChars, undefined);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.baton, "codex");
+  assert.equal(state.iteration, 3);
+  assert.equal(state.status, "running");
+  assert.match(state.lastHandoff, new RegExp(secret));
+  assert.equal(fs.existsSync(result.appliedPath), true);
+  assert.equal(fs.existsSync(result.pendingPath || ""), false);
+  const ledger = fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8");
+  assert.match(ledger, /"event":"duet-step"/);
+});
+
+test("duet step minimax yes keeps pending handoff and state on apply failure", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Apply failure goal");
+  writeFile(dir, "handoff.md", "Codex handoff");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
+  const stateBefore = fs.readFileSync(path.join(dir, "duet-state.json"), "utf8");
+  const journalBefore = fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8");
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: running\n\n${"x".repeat(21000)}`,
+  };
+  const failed = runBridge(dir, ["duet", "step", "--agent", "minimax", "--yes"], { env });
+  assert.notEqual(failed.status, 0, failed.text);
+  const body = jsonOutput(failed);
+  assert.equal(body.event, "duet-step");
+  assert.equal(body.applyStatus, "apply_failed");
+  assert.match(body.error, /--handoff file is too large/);
+  assert.equal(typeof body.pendingPath, "string");
+  assert.equal(fs.existsSync(body.pendingPath), true);
+  assert.equal(fs.readFileSync(path.join(dir, "duet-state.json"), "utf8"), stateBefore);
+  assert.equal(fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8"), journalBefore);
+});
+
+test("duet step minimax yes validates baton before fake model call", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Wrong baton live goal");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: "Status: running\n\nShould not be used.",
+  };
+  fails(runBridge(dir, ["duet", "step", "--agent", "minimax", "--yes"], { env }), /baton is held by codex/);
+  assert.equal(fs.readdirSync(dir).some((name) => name.includes(".duet-step-minimax-")), false);
+});
+
+test("duet step fake model reply requires explicit test gate", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Fake gate goal");
+  writeFile(dir, "handoff.md", "Fake gate handoff");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: "Status: running\n\nThis must not be applied without the test gate.",
+  };
+  const result = runBridge(dir, ["duet", "step", "--agent", "minimax", "--yes", "--port", "1"], { env });
+  assert.notEqual(result.status, 0, result.text);
+  assert.doesNotMatch(result.text, /test-duet-step/);
+  assert.equal(fs.readdirSync(dir).some((name) => name.includes(".duet-step-minimax-")), false);
 });
 
 test("raw mutating duet commands expose local text only when explicitly requested", (t) => {

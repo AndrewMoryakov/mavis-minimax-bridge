@@ -77,11 +77,13 @@ node .\bridge.mjs duet pass --from codex --status human_escalation --handoff .\h
 
 ## Safety
 
-- Duet commands are local-only.
-- They do not call MiniMax and do not spend tokens.
+- Duet commands are local-only except for explicit
+  `duet step --agent minimax --yes`.
+- `duet step --agent minimax --yes` can call MiniMax and spend tokens; run it
+  only after explicit approval.
 - Duet Relay does not wake, message, or activate the other agent automatically.
-- Sending a prompt to MiniMax still requires explicit use of `ask` or `mvs-send`
-  and explicit user approval.
+- Sending arbitrary prompts to MiniMax still requires explicit use of `ask` or
+  `mvs-send` and explicit user approval.
 - Default Duet output is redacted. Use `--raw` only when the user explicitly
   asks for local goal, handoff, or journal text.
 - Keep goal and handoff files compact.

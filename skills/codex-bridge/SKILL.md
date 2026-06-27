@@ -25,8 +25,8 @@ Always run commands from the repository root.
   `session show`, `deny-session list`, `token-stats --ledger`, `audit`,
   `canary-estimate`, `tail`, `duet init/show/next/pass/note`,
   `duet packet export`, and `duet step --dry-run`.
-- Token-spending commands: `ask`, `mvs-send`, `canary`, and `optimize-check`
-  without `--skip-canary`.
+- Token-spending commands: `ask`, `mvs-send`, `canary`, `optimize-check`
+  without `--skip-canary`, and `duet step --agent minimax --yes`.
 - Ask for explicit user approval before running token-spending commands.
 - Never send to a burned, denied, or guessed `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
@@ -96,8 +96,8 @@ node .\bridge.mjs mode set --prompt-cache off --context-budget off
 ## Duet Relay
 
 Use Duet Relay when Codex and MiniMax need to pass a task back and forth after
-the human gives the initial goal. These commands are local-only and do not send
-a model prompt:
+the human gives the initial goal. These commands are local-only except for
+explicit `duet step --agent minimax --yes`:
 
 ```powershell
 node .\bridge.mjs duet init --goal path\to\goal.md --baton codex --max-iterations 12
@@ -105,6 +105,7 @@ node .\bridge.mjs duet show
 node .\bridge.mjs duet next
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
+node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff path\to\handoff.md
@@ -133,6 +134,10 @@ derived packet. Packet exports are local-only projections, not runtime state.
 Use `duet step --agent minimax --dry-run` before any real MiniMax duet step. It
 is local-only, token-free, and validates status, baton, route/model, and
 estimated input tokens.
+
+Run `duet step --agent minimax --yes` only after explicit token-spending
+approval. It sends one review-only MiniMax turn, writes a pending local handoff,
+applies it through hardened `duet pass`, and redacts the answer by default.
 
 Use `duet transcript export` for a redacted JSON transcript. Add
 `--format markdown --out .\duet-transcript.local.md` for a Markdown artifact.
