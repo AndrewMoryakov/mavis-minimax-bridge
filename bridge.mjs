@@ -2994,6 +2994,10 @@ function terminateChildProcessTree(child) {
   child.kill("SIGTERM");
 }
 
+function codexPromptPathForOutput(outputPath) {
+  return outputPath.replace(/\.pending\.local\.md$/i, ".prompt.local.txt");
+}
+
 async function runCodexExecTurn(promptText, envelope, outputPath) {
   const preflight = assertTaskBudget([{ taskPath: envelope.taskPath || "duet-step", text: promptText }]);
   const id = envelope.id || cryptoRandomID();
@@ -3048,7 +3052,30 @@ async function runCodexExecTurn(promptText, envelope, outputPath) {
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const child = spawn(cli, codexArgs, {
+    let promptPath = null;
+    let spawnFile = cli;
+    let spawnArgs = codexArgs;
+    if (process.platform === "win32") {
+      promptPath = codexPromptPathForOutput(outputPath);
+      fs.writeFileSync(promptPath, promptText, "utf8");
+      spawnFile = "powershell.exe";
+      spawnArgs = [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        path.join(bridgeDir, "scripts", "run-codex-exec.ps1"),
+        "-CodexCli",
+        cli,
+        "-Workspace",
+        bridgeDir,
+        "-OutputLastMessage",
+        outputPath,
+        "-PromptPath",
+        promptPath,
+      ];
+    }
+    const child = spawn(spawnFile, spawnArgs, {
       cwd: bridgeDir,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
@@ -3071,12 +3098,14 @@ async function runCodexExecTurn(promptText, envelope, outputPath) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (promptPath) fs.rmSync(promptPath, { force: true });
       reject(error);
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (promptPath) fs.rmSync(promptPath, { force: true });
       const events = parseCodexJsonEvents(stdout);
       const usage = lastCodexUsage(events);
       if (code !== 0) {
@@ -3107,7 +3136,7 @@ async function runCodexExecTurn(promptText, envelope, outputPath) {
         },
       });
     });
-    child.stdin.end(promptText);
+    child.stdin.end(process.platform === "win32" ? "" : promptText);
   });
 }
 
