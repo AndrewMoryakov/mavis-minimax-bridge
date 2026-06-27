@@ -289,8 +289,8 @@ node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
-node .\bridge.mjs duet loop --dry-run --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
-node .\bridge.mjs duet loop --yes --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
 node .\bridge.mjs duet report
 node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
 node .\bridge.mjs duet transcript export
@@ -364,7 +364,8 @@ sandboxing, and a bridge timeout. The last Codex message is written to a pending
 Use `duet loop --dry-run` to preview a future autonomous loop without spending
 tokens. It does not run Codex, MiniMax, or a verifier. It reports whether the
 current relay can continue, which agent would act next, estimated input tokens,
-loop limits, optional verifier configuration, and stop reasons.
+loop limits, optional verifier configuration, required-agent settings, and stop
+reasons.
 
 Use `duet loop --yes` to run a bounded autonomous loop. This can spend both
 Codex/OpenAI and MiniMax tokens. It alternates the current baton holder through
@@ -372,6 +373,11 @@ the same hardened `duet step --agent <agent> --yes` path, optionally runs a
 verifier between running steps, and stops on terminal relay status, max rounds,
 per-agent step limits, token budget, repeated handoff hash, apply failure, or
 verifier failure.
+
+Add `--require-agents codex,minimax` to require both agents before final `done`.
+If an early agent returns `done`, the loop records `suppressedTerminalStatus`
+and routes a running handoff to the next missing required agent. It does not
+suppress `human_escalation`.
 
 Use `duet report` after a loop or step sequence to get a redacted run summary.
 It reads the current relay state and the latest `duet-loop` ledger event, then

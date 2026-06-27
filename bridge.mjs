@@ -150,7 +150,7 @@ function usage() {
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
   node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--raw] [--max-packet-chars <n>] [--port <port>]
-  node .\\bridge.mjs duet loop --dry-run [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>] [-- <verifier-args>...]
+  node .\\bridge.mjs duet loop --dry-run [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
   node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
@@ -2526,6 +2526,9 @@ function reportStepSummary(step) {
   return {
     agent: step.agent || null,
     status: step.status || null,
+    modelStatus: step.modelStatus || null,
+    suppressedTerminalStatus: step.suppressedTerminalStatus || null,
+    suppressionReason: step.suppressionReason || null,
     applyStatus: step.applyStatus || null,
     failed: Boolean(step.failed),
     usage: step.usage || null,
@@ -2605,6 +2608,8 @@ function duetReportPayload(args) {
       counts: latestLoop.counts || null,
       usage: latestLoop.usage || null,
       limits: latestLoop.limits || null,
+      requirements: latestLoop.requirements || null,
+      suppressedTerminalStatuses: Array.isArray(latestLoop.suppressedTerminalStatuses) ? latestLoop.suppressedTerminalStatuses : [],
       steps: Array.isArray(latestLoop.steps) ? latestLoop.steps.map(reportStepSummary) : [],
       verifierRuns: Array.isArray(latestLoop.verifierRuns) ? latestLoop.verifierRuns.map(reportVerifierSummary) : [],
     } : {
@@ -2641,6 +2646,8 @@ function renderDuetReportMarkdown(payload) {
     lines.push(`Counts: ${JSON.stringify(lastLoop.counts || {})}`);
     lines.push(`Usage: ${JSON.stringify(lastLoop.usage || {})}`);
     lines.push(`Limits: ${JSON.stringify(lastLoop.limits || {})}`);
+    if (lastLoop.requirements) lines.push(`Requirements: ${JSON.stringify(lastLoop.requirements)}`);
+    if (lastLoop.suppressedTerminalStatuses?.length) lines.push(`Suppressed terminals: ${JSON.stringify(lastLoop.suppressedTerminalStatuses)}`);
     lines.push("");
     lines.push("### Steps");
     if (lastLoop.steps.length === 0) {
@@ -3397,7 +3404,17 @@ function duetStepDryRun(args) {
   });
 }
 
-async function runDuetStepLive(args) {
+function suppressTerminalStatusInHandoff(answer, suppressedStatus, nextAgent) {
+  const text = String(answer || "").trim();
+  const reason = `Bridge loop policy suppressed premature terminal status '${suppressedStatus}' until required agent '${nextAgent}' contributes.`;
+  const explicit = text.replace(/^\s*status\s*:\s*(done)\b/im, "Status: running");
+  if (explicit !== text) return `${explicit}\n\n${reason}`;
+  const bare = text.replace(/^\s*(done)\b/im, "Status: running");
+  if (bare !== text) return `${bare}\n\n${reason}`;
+  return `Status: running\n\n${reason}\n\n${text}`;
+}
+
+async function runDuetStepLive(args, options = {}) {
   const raw = args.includes("--raw");
   if (!args.includes("--yes")) throw new Error("duet step requires --dry-run or --yes");
   if (args.includes("--dry-run")) throw new Error("duet step accepts either --dry-run or --yes, not both");
@@ -3436,11 +3453,24 @@ async function runDuetStepLive(args) {
     : await runCodexExecTurn(promptText, envelope, pendingPath);
 
   const answer = modelRun.answer || "";
-  const status = parseDuetStepStatus(answer);
+  const modelStatus = parseDuetStepStatus(answer);
   if (agent === "minimax" || !fs.existsSync(pendingPath) || !answer.trim()) {
     const fallbackAgent = agent === "minimax" ? "MiniMax" : "Codex";
     fs.writeFileSync(pendingPath, answer.trim() || `Status: running\n\n${fallbackAgent} returned an empty handoff.`, "utf8");
   }
+  let status = modelStatus;
+  let passTo = nextDuetAgent(agent);
+  let suppression = null;
+  if (typeof options.terminalPolicy === "function") {
+    suppression = options.terminalPolicy({ agent, status: modelStatus });
+  }
+  if (suppression?.suppress) {
+    status = "running";
+    passTo = requireDuetAgent(suppression.to, "suppression.to");
+    const suppressedText = suppressTerminalStatusInHandoff(answer, modelStatus, passTo);
+    fs.writeFileSync(pendingPath, suppressedText, "utf8");
+  }
+  const handoffTextForSummary = fs.readFileSync(pendingPath, "utf8");
 
   const stepEventBase = {
     event: "duet-step",
@@ -3454,6 +3484,9 @@ async function runDuetStepLive(args) {
     role: modelRun.role,
     model: modelRun.model,
     status,
+    modelStatus,
+    suppressedTerminalStatus: suppression?.suppress ? modelStatus : null,
+    suppressionReason: suppression?.reason || null,
     pendingPath,
     turns: publicModelTurns(modelRun.turns || [], raw),
     entries: modelRun.entries,
@@ -3474,7 +3507,7 @@ async function runDuetStepLive(args) {
   let passResult = null;
   try {
     const passArgs = status === "running"
-      ? ["--from", agent, "--to", nextDuetAgent(agent), "--handoff", pendingPath]
+      ? ["--from", agent, "--to", passTo, "--handoff", pendingPath]
       : ["--from", agent, "--status", status, "--handoff", pendingPath];
     passResult = duetPassCommand(passArgs, { print: false });
   } catch (error) {
@@ -3485,7 +3518,7 @@ async function runDuetStepLive(args) {
       applyStatus: "apply_failed",
       error: error.message,
       answer: raw ? answer : undefined,
-      answerSummary: textSummary(answer),
+      answerSummary: textSummary(handoffTextForSummary),
       state: publicDuetState(stateBefore),
     };
     appendJsonl(ledgerPath, out);
@@ -3509,7 +3542,7 @@ async function runDuetStepLive(args) {
       pendingPath: finalAppliedPath ? null : pendingPath,
       warning: renameWarning,
       answer: raw ? answer : undefined,
-      answerSummary: textSummary(answer),
+      answerSummary: textSummary(handoffTextForSummary),
       state: publicDuetState(passResult.state),
     };
     appendJsonl(ledgerPath, out);
@@ -3522,6 +3555,26 @@ async function duetStepLive(args) {
   const result = await runDuetStepLive(args);
   printJson(result.out);
   if (result.failed) process.exitCode = 1;
+}
+
+function parseRequiredDuetAgents(options) {
+  const agents = [];
+  const seen = new Set();
+  for (const value of argValues(options, "--require-agents")) {
+    for (const rawAgent of String(value).split(",")) {
+      const agent = rawAgent.trim().toLowerCase();
+      if (!agent) continue;
+      requireDuetAgent(agent, "--require-agents");
+      if (seen.has(agent)) throw new Error("--require-agents must not repeat agents");
+      seen.add(agent);
+      agents.push(agent);
+    }
+  }
+  return agents;
+}
+
+function missingRequiredDuetAgents(requiredAgents, satisfiedAgents) {
+  return requiredAgents.filter((agent) => !satisfiedAgents.has(agent));
 }
 
 function parseDuetLoopOptions(args) {
@@ -3545,6 +3598,7 @@ function parseDuetLoopOptions(args) {
     maxCodexSteps: positiveIntegerArg(options, "--max-codex-steps", "8"),
     maxMiniMaxSteps: positiveIntegerArg(options, "--max-minimax-steps", "8"),
     maxTokens: positiveIntegerArg(options, "--max-tokens", "60000"),
+    requiredAgents: parseRequiredDuetAgents(options),
     verifierTimeoutSec: positiveIntegerArg(options, "--verifier-timeout-sec", "60"),
     verifier: verifierPathArg
       ? {
@@ -3597,7 +3651,7 @@ function duetLoopDryRun(args) {
   if (args.includes("--yes")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
 
   const loop = parseDuetLoopOptions(args);
-  const { raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, verifier } = loop;
+  const { raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, requiredAgents, verifier } = loop;
   const state = readDuetState();
   const journal = readDuetJournal();
 
@@ -3639,6 +3693,11 @@ function duetLoopDryRun(args) {
       maxTokens,
       maxPacketChars,
     },
+    requirements: {
+      requiredAgents,
+      satisfiedAgents: [],
+      missingAgents: requiredAgents,
+    },
     verifier: verifier
       ? {
         path: verifier.path,
@@ -3676,12 +3735,14 @@ async function duetLoopLive(args) {
   if (args.includes("--dry-run")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
   requireSpendingApproval(args, "duet loop");
   const loop = parseDuetLoopOptions(args);
-  const { raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens } = loop;
+  const { raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, requiredAgents } = loop;
   const startedAt = now();
   const startedMs = Date.now();
   const steps = [];
   const verifierRuns = [];
   const stopReasons = [];
+  const satisfiedAgents = new Set();
+  const suppressedTerminalStatuses = [];
   let codexSteps = 0;
   let minimaxSteps = 0;
   let totalEstimatedInputTokens = 0;
@@ -3716,10 +3777,28 @@ async function duetLoopLive(args) {
     }
     totalEstimatedInputTokens += preview.estimatedInputTokens;
 
-    const stepResult = await runDuetStepLive(["--agent", agent, "--yes", "--max-packet-chars", String(maxPacketChars), ...(raw ? ["--raw"] : [])]);
+    const stepResult = await runDuetStepLive(
+      ["--agent", agent, "--yes", "--max-packet-chars", String(maxPacketChars), ...(raw ? ["--raw"] : [])],
+      {
+        terminalPolicy: ({ status }) => {
+          if (status !== "done" || requiredAgents.length === 0) return null;
+          const nextSatisfiedAgents = new Set([...satisfiedAgents, agent]);
+          const missing = missingRequiredDuetAgents(requiredAgents, nextSatisfiedAgents);
+          if (missing.length === 0) return null;
+          return {
+            suppress: true,
+            to: missing[0],
+            reason: `required_agents_missing:${missing.join(",")}`,
+          };
+        },
+      },
+    );
     steps.push({
       agent,
       status: stepResult.out.status,
+      modelStatus: stepResult.out.modelStatus,
+      suppressedTerminalStatus: stepResult.out.suppressedTerminalStatus,
+      suppressionReason: stepResult.out.suppressionReason,
       applyStatus: stepResult.out.applyStatus,
       failed: stepResult.failed,
       usage: stepResult.out.usage || null,
@@ -3734,6 +3813,14 @@ async function duetLoopLive(args) {
     if (stepResult.failed) {
       stopReasons.push("step_apply_failed");
       break;
+    }
+    satisfiedAgents.add(agent);
+    if (stepResult.out.suppressedTerminalStatus) {
+      suppressedTerminalStatuses.push({
+        agent,
+        status: stepResult.out.suppressedTerminalStatus,
+        reason: stepResult.out.suppressionReason,
+      });
     }
     if (totalInputTokens + totalOutputTokens > maxTokens) {
       stopReasons.push(`actual_token_budget:${totalInputTokens + totalOutputTokens}/${maxTokens}`);
@@ -3798,6 +3885,12 @@ async function duetLoopLive(args) {
       maxTokens,
       maxPacketChars,
     },
+    requirements: {
+      requiredAgents,
+      satisfiedAgents: [...satisfiedAgents],
+      missingAgents: missingRequiredDuetAgents(requiredAgents, satisfiedAgents),
+    },
+    suppressedTerminalStatuses,
     state: raw ? finalState : publicDuetState(finalState),
   };
   appendJsonl(ledgerPath, out);
@@ -4282,7 +4375,7 @@ async function duetCommand(args) {
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
   node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--raw] [--max-packet-chars <n>] [--port <port>]
-  node .\\bridge.mjs duet loop --dry-run [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>] [-- <verifier-args>...]
+  node .\\bridge.mjs duet loop --dry-run [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
   node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]

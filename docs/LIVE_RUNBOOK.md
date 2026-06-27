@@ -51,7 +51,7 @@ redacted launch packet with the exact `show`, `next`, `loop --dry-run`,
 Run the dry run from the launch packet:
 
 ```powershell
-node .\bridge.mjs duet loop --dry-run --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
 ```
 
 Check:
@@ -59,12 +59,13 @@ Check:
 - `wouldRunLoop` is `true`.
 - `nextStep.agent` is the expected baton holder.
 - `stopReasons` is empty.
+- `requirements.requiredAgents` matches the intended agent set.
 - token estimate is acceptable for this task.
 
 If you have a verifier:
 
 ```powershell
-node .\bridge.mjs duet loop --dry-run --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000 --verifier .\verify.mjs -- --fast
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000 --verifier .\verify.mjs -- --fast
 ```
 
 Verifier files must live inside the bridge root. They run from a scratch working
@@ -76,18 +77,20 @@ not `process.cwd()`.
 After the dry run looks right, explicitly approve the token-spending loop:
 
 ```powershell
-node .\bridge.mjs duet loop --yes --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
 ```
 
 With a verifier:
 
 ```powershell
-node .\bridge.mjs duet loop --yes --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000 --verifier .\verify.mjs -- --fast
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000 --verifier .\verify.mjs -- --fast
 ```
 
 The bridge alternates the current baton holder through real agent steps and
 stops on terminal status, max rounds, per-agent step limits, token budget,
-repeated handoff hash, apply failure, or verifier failure.
+repeated handoff hash, apply failure, or verifier failure. With
+`--require-agents`, a premature `done` is recorded as suppressed and handed to
+the next missing required agent; `human_escalation` remains terminal.
 
 ## 5. Read The Final Report
 
@@ -141,4 +144,3 @@ them local unless the human explicitly decides otherwise.
   path reported by the step result.
 - If status is `done` or `human_escalation`, do not continue the loop; read the
   report and transcript.
-

@@ -597,6 +597,9 @@ test("duet loop dry-run previews next agent step and does not mutate relay files
   assert.equal(dryRun.verifier.path.basename, "verify.mjs");
   assert.deepEqual(dryRun.verifier.args, ["--fast"]);
   assert.equal(dryRun.limits.maxRounds, 4);
+  assert.deepEqual(dryRun.requirements.requiredAgents, []);
+  assert.deepEqual(dryRun.requirements.satisfiedAgents, []);
+  assert.deepEqual(dryRun.requirements.missingAgents, []);
   assert.doesNotMatch(JSON.stringify(dryRun), new RegExp(secret));
   assert.equal(fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8"), ledgerBefore);
   assert.equal(fs.readFileSync(path.join(dir, "duet-state.json"), "utf8"), stateBefore);
@@ -622,6 +625,26 @@ test("duet loop dry-run reports terminal and budget stops without agent preview"
   assert.match(budget.stopReasons.join(","), /token_budget:/);
   assert.equal(budget.nextStep.agent, "codex");
   assert.equal(budget.nextStep.withinTokenBudget, false);
+});
+
+test("duet loop dry-run validates required agents", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Loop required agents dry-run goal");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const dryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run", "--require-agents", "codex,minimax"]));
+  assert.deepEqual(dryRun.requirements.requiredAgents, ["codex", "minimax"]);
+  assert.deepEqual(dryRun.requirements.satisfiedAgents, []);
+  assert.deepEqual(dryRun.requirements.missingAgents, ["codex", "minimax"]);
+
+  fails(
+    runBridge(dir, ["duet", "loop", "--dry-run", "--require-agents", "codex,codex"]),
+    /must not repeat agents/,
+  );
+  fails(
+    runBridge(dir, ["duet", "loop", "--dry-run", "--require-agents", "codex,other"]),
+    /--require-agents must be one of: codex, minimax/,
+  );
 });
 
 test("duet loop yes applies fake steps until done without leaking by default", (t) => {
@@ -653,6 +676,85 @@ test("duet loop yes applies fake steps until done without leaking by default", (
   assert.equal(state.status, "done");
   assert.equal(state.baton, null);
   assert.match(state.lastHandoff, new RegExp(secret));
+});
+
+test("duet loop yes suppresses premature done until required agents contribute", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_LOOP_REQUIRE_AGENTS_123";
+  writeFile(dir, "goal.md", `Loop required agents goal ${secret}`);
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: done\n\nPremature completion ${secret}.`,
+  };
+  const result = ok(runBridge(dir, [
+    "duet",
+    "loop",
+    "--yes",
+    "--max-rounds",
+    "3",
+    "--require-agents",
+    "codex,minimax",
+  ], { env }));
+  assert.equal(result.event, "duet-loop");
+  assert.equal(result.status, "done");
+  assert.deepEqual(result.stopReasons, ["terminal_status:done"]);
+  assert.equal(result.counts.codexSteps, 1);
+  assert.equal(result.counts.minimaxSteps, 1);
+  assert.equal(result.steps[0].agent, "codex");
+  assert.equal(result.steps[0].status, "running");
+  assert.equal(result.steps[0].modelStatus, "done");
+  assert.equal(result.steps[0].suppressedTerminalStatus, "done");
+  assert.match(result.steps[0].suppressionReason, /required_agents_missing:minimax/);
+  assert.equal(result.steps[1].agent, "minimax");
+  assert.equal(result.steps[1].status, "done");
+  assert.equal(result.steps[1].modelStatus, "done");
+  assert.deepEqual(result.requirements.requiredAgents, ["codex", "minimax"]);
+  assert.deepEqual(result.requirements.satisfiedAgents, ["codex", "minimax"]);
+  assert.deepEqual(result.requirements.missingAgents, []);
+  assert.equal(result.suppressedTerminalStatuses.length, 1);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.status, "done");
+  assert.equal(state.baton, null);
+
+  const report = ok(runBridge(dir, ["duet", "report"]));
+  assert.deepEqual(report.lastLoop.requirements.requiredAgents, ["codex", "minimax"]);
+  assert.equal(report.lastLoop.suppressedTerminalStatuses.length, 1);
+  assert.equal(report.lastLoop.steps[0].suppressedTerminalStatus, "done");
+});
+
+test("duet loop yes does not suppress human escalation for required agents", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Loop human escalation required agents goal");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: "Status: human_escalation\n\nNeed human decision.",
+  };
+  const result = ok(runBridge(dir, [
+    "duet",
+    "loop",
+    "--yes",
+    "--max-rounds",
+    "3",
+    "--require-agents",
+    "codex,minimax",
+  ], { env }));
+  assert.equal(result.status, "human_escalation");
+  assert.deepEqual(result.stopReasons, ["terminal_status:human_escalation"]);
+  assert.equal(result.counts.codexSteps, 1);
+  assert.equal(result.counts.minimaxSteps, 0);
+  assert.deepEqual(result.requirements.satisfiedAgents, ["codex"]);
+  assert.deepEqual(result.requirements.missingAgents, ["minimax"]);
+  assert.deepEqual(result.suppressedTerminalStatuses, []);
+  assert.equal(result.steps[0].modelStatus, "human_escalation");
+  assert.equal(result.steps[0].suppressedTerminalStatus, null);
 });
 
 test("duet loop yes stops when actual step usage exceeds token budget", (t) => {

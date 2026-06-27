@@ -315,8 +315,8 @@ same hardened `duet pass` validation, and redact the answer in stdout unless
 Preview or run a bounded autonomous loop:
 
 ```powershell
-node .\bridge.mjs duet loop --dry-run --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
-node .\bridge.mjs duet loop --yes --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
 ```
 
 `duet loop --dry-run` is a Phase 5C preflight. It does not run Codex, MiniMax,
@@ -329,6 +329,10 @@ through the same hardened `duet step --agent <agent> --yes` path, optionally
 runs a verifier between running steps, and stops on `done`, `human_escalation`,
 max rounds, step limits, token budget, repeated handoff hash, apply failure, or
 verifier failure.
+
+Add `--require-agents codex,minimax` when a live loop must not finish until both
+agents have contributed. A premature `done` is recorded and routed to the next
+missing required agent; `human_escalation` always remains terminal.
 
 After a loop stops, run:
 

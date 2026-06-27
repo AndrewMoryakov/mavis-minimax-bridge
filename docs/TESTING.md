@@ -48,10 +48,12 @@ Covered areas:
 - `duet step --agent codex --yes` offline fake-agent path: successful handoff
   apply, redacted default output, usage reporting, and baton transfer to MiniMax.
 - `duet loop --dry-run` local preflight: next-agent preview, token budget stop,
-  terminal stop, verifier config, redaction, and no runtime-file mutation.
+  terminal stop, verifier config, required-agent validation, redaction, and no
+  runtime-file mutation.
 - `duet loop --yes` offline fake-agent path: successful terminal completion,
   repeated-handoff stop, verifier failure stop, redaction, actual token budget
-  stop, and summary counts.
+  stop, required-agent `done` suppression, `human_escalation` passthrough, and
+  summary counts.
 - `duet report` redacted latest-loop summaries, transcript hashes, suggested
   next commands, and Markdown file output.
 - Redacted and raw `duet transcript export`, including Markdown output and raw
