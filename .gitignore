@@ -5,6 +5,8 @@
 /duet-state.json
 /duet-journal.md
 /duet.lock
+/duet-state.json.*.tmp
+/duet-journal.md.*.tmp
 *.local.*
 node_modules/
 .env

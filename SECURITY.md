@@ -42,6 +42,8 @@ Do not commit or publish:
 - `duet-state.json`;
 - `duet-journal.md`;
 - `duet.lock`;
+- `duet-state.json.*.tmp`;
+- `duet-journal.md.*.tmp`;
 - `*.local.*`;
 - `.env`;
 - MiniMax, Mavis, OpenRouter, or GitHub tokens.

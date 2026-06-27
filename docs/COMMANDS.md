@@ -289,6 +289,6 @@ node .\bridge.mjs tail --raw
 ```
 
 `ledger.jsonl`, `inbox.jsonl`, `outbox.jsonl`, `duet-state.json`,
-`duet-journal.md`, and `duet.lock` are local runtime files and are ignored by
-git.
+`duet-journal.md`, `duet.lock`, and duet atomic temp files are local runtime
+files and are ignored by git.
 `tail` redacts sensitive payloads by default; `--raw` prints exact local JSONL.

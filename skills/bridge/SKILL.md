@@ -4,9 +4,9 @@ description: >-
   Control the local Mavis MiniMax Bridge from MiniMax Code. Use when the user
   types /bridge or asks to connect Codex and MiniMax, inspect bridge state,
   audit token optimization, set a Mavis session, change bridge modes, or run a
-  safe collaboration review. Commands: /bridge status, /bridge audit,
+  safe collaboration review, including Duet Relay baton-passing. Commands: /bridge status, /bridge audit,
   /bridge session, /bridge mode, /bridge estimate, /bridge ask, /bridge send,
-  /bridge help.
+  /bridge duet, /bridge help.
 ---
 
 # Bridge Control
@@ -22,12 +22,16 @@ Always run commands from that directory.
 
 - `status`, `state`, `audit`, `token-stats`, `session show`, `mode list`, and
   `canary-estimate` are local-only and do not intentionally start a model turn.
+- `duet init`, `duet show`, `duet pass`, and `duet note` are local-only
+  coordination commands. They do not call MiniMax.
 - `ask`, `canary`, `optimize-check` without `--skip-canary`, and `mvs-send`
   can spend tokens. Ask for explicit user approval before running them.
 - Never send to a burned or denied `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
 - Keep prompts compact. For multi-turn bridge review, use a small task file
   plus 2-3 focused follow-up task files.
+- Duet commands redact relay text by default; use `--raw` only when the user
+  intentionally needs local goal, handoff, or journal text in stdout.
 
 ## Commands
 
@@ -45,6 +49,7 @@ node .\bridge.mjs token-stats --ledger
 node .\bridge.mjs mode list
 node .\bridge.mjs session show
 node .\bridge.mjs canary-estimate
+node .\bridge.mjs duet show
 ```
 
 ### `/bridge status`
@@ -120,6 +125,52 @@ node .\bridge.mjs canary-estimate
 ```
 
 Use this before any canary that may spend tokens.
+
+### `/bridge duet show`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet show
+```
+
+Summarize the current relay without printing local goal, handoff, or journal
+text. Use `--raw` only when the user explicitly asks for the full local relay
+content.
+
+### `/bridge duet init <goal-file>`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet init --goal path\to\goal.md --baton codex --max-iterations 12
+```
+
+Use a compact goal file. `duet init` creates ignored local runtime files
+`duet-state.json` and `duet-journal.md`.
+
+### `/bridge duet pass <from> [to] <handoff-file>`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet pass --from codex --to minimax --handoff path\to\handoff.md
+```
+
+If the relay is complete or needs the human, use:
+
+```powershell
+node .\bridge.mjs duet pass --from minimax --status done --handoff path\to\handoff.md
+node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff path\to\handoff.md
+```
+
+### `/bridge duet note <agent> <note-file>`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet note --agent codex --note path\to\note.md
+```
 
 ### `/bridge ask`
 

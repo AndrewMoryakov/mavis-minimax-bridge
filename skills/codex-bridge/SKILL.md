@@ -4,7 +4,7 @@ description: >-
   Operate the local Mavis MiniMax Bridge from Codex. Use when the user asks
   Codex to inspect bridge status, audit MiniMax token optimization, coordinate
   with MiniMax Code, set a Mavis session, change economy modes, run a safe
-  canary estimate, or send a review-only task through the bridge.
+  canary estimate, use Duet Relay, or send a review-only task through the bridge.
 ---
 
 # Mavis MiniMax Bridge
@@ -23,13 +23,15 @@ Always run commands from the repository root.
 
 - Local-only commands: `status`, `state`, `config show`, `mode list`,
   `session show`, `deny-session list`, `token-stats --ledger`, `audit`,
-  `canary-estimate`, and `tail`.
+  `canary-estimate`, `tail`, and `duet init/show/pass/note`.
 - Token-spending commands: `ask`, `mvs-send`, `canary`, and `optimize-check`
   without `--skip-canary`.
 - Ask for explicit user approval before running token-spending commands.
 - Never send to a burned, denied, or guessed `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
 - Keep task files compact and focused.
+- Duet commands redact relay text by default; use `--raw` only when the user
+  intentionally needs local goal, handoff, or journal text in stdout.
 
 ## Routine Checks
 
@@ -84,6 +86,30 @@ node .\bridge.mjs mode set --prompt-cache enforce --context-budget enforce
 node .\bridge.mjs mode set --prompt-cache observe --context-budget observe
 node .\bridge.mjs mode set --prompt-cache off --context-budget off
 ```
+
+## Duet Relay
+
+Use Duet Relay when Codex and MiniMax need to pass a task back and forth after
+the human gives the initial goal. These commands are local-only and do not send
+a model prompt:
+
+```powershell
+node .\bridge.mjs duet init --goal path\to\goal.md --baton codex --max-iterations 12
+node .\bridge.mjs duet show
+node .\bridge.mjs duet pass --from codex --to minimax --handoff path\to\handoff.md
+node .\bridge.mjs duet note --agent codex --note path\to\note.md
+```
+
+Finish or escalate:
+
+```powershell
+node .\bridge.mjs duet pass --from minimax --status done --handoff path\to\handoff.md
+node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff path\to\handoff.md
+```
+
+`duet-state.json`, `duet-journal.md`, `duet.lock`, and duet atomic temp files
+are local ignored runtime files. Keep handoffs compact; goal, handoff, and note
+files are limited to 20000 characters.
 
 ## Collaboration With MiniMax
 

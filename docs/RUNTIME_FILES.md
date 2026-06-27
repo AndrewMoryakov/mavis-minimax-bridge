@@ -10,6 +10,8 @@ outbox.jsonl
 duet-state.json
 duet-journal.md
 duet.lock
+duet-state.json.*.tmp
+duet-journal.md.*.tmp
 ```
 
 They are intentionally ignored by git because they can contain local paths,
@@ -35,7 +37,8 @@ node .\scripts\init-runtime.mjs --empty-jsonl
 
 `duet-state.json` and `duet-journal.md` are created by `duet init`, not by the
 runtime initializer. `duet.lock` is a short-lived guard file created while a
-duet command updates state.
+duet command updates state. Atomic duet temp files may appear only if a process
+dies mid-write; they are ignored by git and can be deleted after inspection.
 
 ```powershell
 node .\bridge.mjs duet init --goal .\duet-goal.local.md
