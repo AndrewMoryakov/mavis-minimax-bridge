@@ -8,10 +8,18 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceBridge = path.join(repoRoot, "bridge.mjs");
+const sourceLib = path.join(repoRoot, "lib");
+
+function copyBridgeRuntimeFiles(dir) {
+  fs.copyFileSync(sourceBridge, path.join(dir, "bridge.mjs"));
+  if (fs.existsSync(sourceLib)) {
+    fs.cpSync(sourceLib, path.join(dir, "lib"), { recursive: true });
+  }
+}
 
 function sandbox(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-test-"));
-  fs.copyFileSync(sourceBridge, path.join(dir, "bridge.mjs"));
+  copyBridgeRuntimeFiles(dir);
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -20,7 +28,7 @@ function sandboxWithSpace(t) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "mavis bridge parent-"));
   const dir = path.join(parent, "bridge repo with space");
   fs.mkdirSync(dir);
-  fs.copyFileSync(sourceBridge, path.join(dir, "bridge.mjs"));
+  copyBridgeRuntimeFiles(dir);
   t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
   return dir;
 }
@@ -1445,6 +1453,19 @@ test("state command reports duet runtime files when they exist", (t) => {
   assert.equal(state.runtimeFiles.duetState.exists, true);
   assert.equal(state.runtimeFiles.duetJournal.exists, true);
   assert.equal(state.runtimeFiles.duetLock.exists, false);
+});
+
+test("sandbox runtime files stay in bridge root and never under lib", (t) => {
+  const dir = sandbox(t);
+  fs.mkdirSync(path.join(dir, "lib"), { recursive: true });
+  writeFile(dir, "goal.md", "Sandbox runtime root goal");
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md"]));
+  for (const name of ["duet-state.json", "duet-journal.md", "ledger.jsonl"]) {
+    assert.equal(fs.existsSync(path.join(dir, name)), true, `${name} should be written to sandbox root`);
+    assert.equal(fs.existsSync(path.join(dir, "lib", name)), false, `${name} must not be written under lib`);
+  }
+  assert.equal(fs.existsSync(path.join(dir, "lib", "config.json")), false, "config.json must not be written under lib");
 });
 
 test("duet runtime files are written to the real directory when path contains spaces", (t) => {
