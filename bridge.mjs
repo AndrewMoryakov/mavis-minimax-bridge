@@ -150,6 +150,7 @@ function usage() {
   node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--raw] [--max-packet-chars <n>] [--port <port>]
   node .\\bridge.mjs duet loop --dry-run [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>] [-- <verifier-args>...]
+  node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
@@ -2512,6 +2513,182 @@ function renderDuetTranscriptMarkdown(payload) {
   return lines.join("\n");
 }
 
+function latestLedgerEvent(eventName, limit = 500) {
+  const events = readJsonl(ledgerPath, limit);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index]?.event === eventName) return events[index];
+  }
+  return null;
+}
+
+function reportStepSummary(step) {
+  return {
+    agent: step.agent || null,
+    status: step.status || null,
+    applyStatus: step.applyStatus || null,
+    failed: Boolean(step.failed),
+    usage: step.usage || null,
+    answerSummary: step.answerSummary || null,
+  };
+}
+
+function reportVerifierSummary(verifier) {
+  return {
+    status: verifier.status || null,
+    exitCode: verifier.exitCode ?? null,
+    durationMs: verifier.durationMs ?? null,
+    verifier: verifier.verifier || null,
+  };
+}
+
+function reportNextCommands(state) {
+  const inspect = [
+    "node .\\bridge.mjs duet show",
+    "node .\\bridge.mjs duet next",
+    "node .\\bridge.mjs duet report",
+    "node .\\bridge.mjs duet transcript export --format markdown --out .\\duet-transcript.local.md",
+  ];
+  if (state.status === "running") {
+    return {
+      inspect,
+      continue: [
+        "node .\\bridge.mjs duet loop --dry-run",
+        "node .\\bridge.mjs duet loop --yes",
+      ],
+      finish: [
+        `node .\\bridge.mjs duet pass --from ${state.baton} --status done --handoff <file>`,
+        `node .\\bridge.mjs duet pass --from ${state.baton} --status human_escalation --handoff <file>`,
+      ],
+    };
+  }
+  return {
+    inspect,
+    continue: [],
+    finish: [],
+  };
+}
+
+function duetReportPayload(args) {
+  const format = argValue(args, "--format", "json");
+  if (!["json", "markdown"].includes(format)) throw new Error("--format must be json or markdown");
+  const ledgerLines = positiveIntegerArg(args, "--ledger-lines", "500");
+  const state = readDuetState();
+  const journal = readDuetJournal();
+  const latestLoop = latestLedgerEvent("duet-loop", ledgerLines);
+  const publicState = publicDuetState(state);
+  return {
+    event: "duet-report",
+    generatedAt: now(),
+    format,
+    redacted: true,
+    statePath: duetStatePath,
+    journalPath: duetJournalPath,
+    ledgerPath,
+    ledgerLines,
+    state: publicState,
+    transcript: {
+      stateSha256: textDigest(stableStringify(publicState)),
+      journal: textSummary(journal),
+      exportCommands: {
+        json: "node .\\bridge.mjs duet transcript export",
+        markdown: "node .\\bridge.mjs duet transcript export --format markdown --out .\\duet-transcript.local.md",
+      },
+    },
+    lastLoop: latestLoop ? {
+      found: true,
+      ts: latestLoop.ts || null,
+      mode: latestLoop.mode || null,
+      status: latestLoop.status || null,
+      stopReasons: Array.isArray(latestLoop.stopReasons) ? latestLoop.stopReasons : [],
+      durationMs: latestLoop.durationMs ?? null,
+      counts: latestLoop.counts || null,
+      usage: latestLoop.usage || null,
+      limits: latestLoop.limits || null,
+      steps: Array.isArray(latestLoop.steps) ? latestLoop.steps.map(reportStepSummary) : [],
+      verifierRuns: Array.isArray(latestLoop.verifierRuns) ? latestLoop.verifierRuns.map(reportVerifierSummary) : [],
+    } : {
+      found: false,
+      reason: `no duet-loop event found in last ${ledgerLines} ledger lines`,
+    },
+    next: reportNextCommands(state),
+  };
+}
+
+function renderDuetReportMarkdown(payload) {
+  const lastLoop = payload.lastLoop;
+  const lines = [
+    "# Duet Run Report",
+    "",
+    `Generated: ${payload.generatedAt}`,
+    `Status: ${payload.state.status}`,
+    `Baton: ${payload.state.baton ?? "none"}`,
+    `Iteration: ${payload.state.iteration}/${payload.state.maxIterations}`,
+    `Journal SHA-256: ${payload.transcript.journal.sha256}`,
+    `State SHA-256: ${payload.transcript.stateSha256}`,
+    "",
+    "## Last Loop",
+    "",
+  ];
+  if (!lastLoop.found) {
+    lines.push(lastLoop.reason);
+  } else {
+    lines.push(`Timestamp: ${lastLoop.ts}`);
+    lines.push(`Mode: ${lastLoop.mode}`);
+    lines.push(`Status: ${lastLoop.status}`);
+    lines.push(`Stop reasons: ${lastLoop.stopReasons.length ? lastLoop.stopReasons.join(", ") : "none"}`);
+    lines.push(`Duration ms: ${lastLoop.durationMs ?? "unknown"}`);
+    lines.push(`Counts: ${JSON.stringify(lastLoop.counts || {})}`);
+    lines.push(`Usage: ${JSON.stringify(lastLoop.usage || {})}`);
+    lines.push(`Limits: ${JSON.stringify(lastLoop.limits || {})}`);
+    lines.push("");
+    lines.push("### Steps");
+    if (lastLoop.steps.length === 0) {
+      lines.push("");
+      lines.push("No steps recorded.");
+    } else {
+      for (const [index, step] of lastLoop.steps.entries()) {
+        lines.push("");
+        lines.push(`${index + 1}. ${step.agent ?? "unknown"} - status=${step.status ?? "unknown"} apply=${step.applyStatus ?? "unknown"} failed=${step.failed}`);
+        if (step.usage) lines.push(`   usage=${JSON.stringify(step.usage)}`);
+        if (step.answerSummary?.sha256) lines.push(`   answerSha256=${step.answerSummary.sha256}`);
+      }
+    }
+    if (lastLoop.verifierRuns.length > 0) {
+      lines.push("", "### Verifiers");
+      for (const [index, verifier] of lastLoop.verifierRuns.entries()) {
+        lines.push("");
+        lines.push(`${index + 1}. status=${verifier.status ?? "unknown"} exit=${verifier.exitCode ?? "null"} durationMs=${verifier.durationMs ?? "unknown"}`);
+        if (verifier.verifier?.basename) lines.push(`   verifier=${verifier.verifier.basename}`);
+      }
+    }
+  }
+  lines.push("", "## Next Commands", "");
+  for (const command of payload.next.inspect) lines.push(`- \`${command}\``);
+  for (const command of payload.next.continue) lines.push(`- \`${command}\``);
+  for (const command of payload.next.finish) lines.push(`- \`${command}\``);
+  lines.push("");
+  return lines.join("\n");
+}
+
+function duetReportCommand(args) {
+  const payload = duetReportPayload(args);
+  const outPathArg = argValue(args, "--out", null);
+  const rendered = payload.format === "json" ? stableStringify(payload) : renderDuetReportMarkdown(payload);
+  if (outPathArg) {
+    const outPath = resolveDuetOutputPath(outPathArg, false);
+    fs.writeFileSync(outPath, rendered, "utf8");
+    return printJson({
+      event: "duet-report",
+      format: payload.format,
+      redacted: true,
+      outPath,
+      chars: rendered.length,
+      sha256: textDigest(rendered),
+    });
+  }
+  process.stdout.write(config.asciiConsole === false ? rendered : escapeNonAscii(rendered));
+}
+
 function printDuetEvent(event, state, args, extra = {}) {
   const raw = args.includes("--raw");
   printJson({
@@ -4046,6 +4223,7 @@ async function duetCommand(args) {
   node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--raw] [--max-packet-chars <n>] [--port <port>]
   node .\\bridge.mjs duet loop --dry-run [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>] [-- <verifier-args>...]
+  node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
@@ -4064,6 +4242,7 @@ async function duetCommand(args) {
     if (rest.includes("--dry-run")) return duetLoopDryRun(rest);
     return await withDuetLockAsync(() => duetLoopLive(rest));
   }
+  if (subcommand === "report") return duetReportCommand(rest);
   if (subcommand === "transcript") {
     const [action, ...actionRest] = rest;
     if (action === "export") return duetTranscriptExport(actionRest);

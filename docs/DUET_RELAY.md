@@ -205,3 +205,15 @@ regular files inside the bridge root.
 Duet commands are local-only except for explicit `duet step --agent minimax
 --yes`, `duet step --agent codex --yes`, and `duet loop --yes`, which can call
 agents and spend tokens.
+
+Summarize the latest autonomous run:
+
+```powershell
+node .\bridge.mjs duet report
+node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
+```
+
+`duet report` is local-only and redacted. It reports the current relay state,
+the latest `duet-loop` stop reasons, step counts, token usage, verifier
+summaries, transcript hashes, and suggested continuation commands without
+printing local goal, handoff, or journal text.

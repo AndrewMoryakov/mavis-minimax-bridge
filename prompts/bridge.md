@@ -31,6 +31,9 @@ Rules:
   tokens.
 - Use `duet loop --yes` only after explicit token-spending approval; it can run
   both Codex and MiniMax steps.
+- Use `duet report` after a loop or step sequence to summarize stop reasons,
+  usage, verifier results, transcript hashes, and next commands without
+  revealing local relay text.
 - Use token-spending commands only after explicit user approval.
 - Never send to a guessed, burned, denied, or expensive `mvs_...` session.
 - Prefer review-only collaboration before asking MiniMax for patch proposals.

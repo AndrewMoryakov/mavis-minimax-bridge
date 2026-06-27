@@ -290,6 +290,8 @@ node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
 node .\bridge.mjs duet loop --yes --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet report
+node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcript.local.md
 node .\bridge.mjs duet verify --verifier .\examples\duet-tetris-browser\verify.mjs -- --skip-relay-check
@@ -364,6 +366,12 @@ the same hardened `duet step --agent <agent> --yes` path, optionally runs a
 verifier between running steps, and stops on terminal relay status, max rounds,
 per-agent step limits, token budget, repeated handoff hash, apply failure, or
 verifier failure.
+
+Use `duet report` after a loop or step sequence to get a redacted run summary.
+It reads the current relay state and the latest `duet-loop` ledger event, then
+reports stop reasons, step counts, token usage, verifier summaries, transcript
+hashes, and suggested continuation commands. It is local-only and does not
+print goal, handoff, or journal text.
 
 Use `duet verify` to run a Node verifier through the bridge. Verifiers must be
 `.js`, `.mjs`, or `.cjs` files inside the bridge root. The command uses

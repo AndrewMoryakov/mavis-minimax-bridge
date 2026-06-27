@@ -48,7 +48,10 @@ Covered areas:
 - `duet loop --dry-run` local preflight: next-agent preview, token budget stop,
   terminal stop, verifier config, redaction, and no runtime-file mutation.
 - `duet loop --yes` offline fake-agent path: successful terminal completion,
-  repeated-handoff stop, verifier failure stop, redaction, and summary counts.
+  repeated-handoff stop, verifier failure stop, redaction, actual token budget
+  stop, and summary counts.
+- `duet report` redacted latest-loop summaries, transcript hashes, suggested
+  next commands, and Markdown file output.
 - Redacted and raw `duet transcript export`, including Markdown output and raw
   output path protection.
 - `duet verify` verifier execution, redacted/raw output, non-zero exit codes,

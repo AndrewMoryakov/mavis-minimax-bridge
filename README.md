@@ -249,9 +249,15 @@ node .\bridge.mjs duet show --raw
 Export a redacted transcript for review:
 
 ```powershell
+node .\bridge.mjs duet report
+node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcript.local.md
 ```
+
+`duet report` is local-only and redacted. Use it after `duet loop --yes` to
+see the final state, stop reasons, step counts, token usage, verifier summaries,
+transcript hashes, and suggested continuation commands.
 
 Raw transcript exports require explicit `--raw`; raw file output must use a
 `.local.*` path.
@@ -316,6 +322,17 @@ through the same hardened `duet step --agent <agent> --yes` path, optionally
 runs a verifier between running steps, and stops on `done`, `human_escalation`,
 max rounds, step limits, token budget, repeated handoff hash, apply failure, or
 verifier failure.
+
+After a loop stops, run:
+
+```powershell
+node .\bridge.mjs duet report
+node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
+```
+
+The report is safe to inspect by default: it summarizes the latest `duet-loop`
+ledger event and current relay state without printing local goal, handoff, or
+journal text.
 
 Run a local verifier through the bridge:
 

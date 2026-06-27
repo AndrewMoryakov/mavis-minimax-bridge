@@ -681,6 +681,39 @@ test("duet loop yes stops on verifier failure after a running step", (t) => {
   assert.match(journal, /status=fail/);
 });
 
+test("duet report summarizes the latest loop without leaking relay text", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_DUET_REPORT_123";
+  writeFile(dir, "goal.md", `Loop report goal ${secret}`);
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: done\n\nCodex loop report completed ${secret}.`,
+  };
+  ok(runBridge(dir, ["duet", "loop", "--yes", "--max-rounds", "3"], { env }));
+
+  const report = ok(runBridge(dir, ["duet", "report"]));
+  assert.equal(report.event, "duet-report");
+  assert.equal(report.redacted, true);
+  assert.equal(report.state.status, "done");
+  assert.equal(report.lastLoop.found, true);
+  assert.deepEqual(report.lastLoop.stopReasons, ["terminal_status:done"]);
+  assert.equal(report.lastLoop.counts.codexSteps, 1);
+  assert.equal(report.lastLoop.steps[0].agent, "codex");
+  assert.equal(typeof report.transcript.journal.sha256, "string");
+  assert.doesNotMatch(JSON.stringify(report), new RegExp(secret));
+
+  const markdown = ok(runBridge(dir, ["duet", "report", "--format", "markdown", "--out", "duet-report.local.md"]));
+  assert.equal(markdown.event, "duet-report");
+  assert.equal(markdown.format, "markdown");
+  const text = fs.readFileSync(path.join(dir, "duet-report.local.md"), "utf8");
+  assert.match(text, /# Duet Run Report/);
+  assert.match(text, /terminal_status:done/);
+  assert.doesNotMatch(text, new RegExp(secret));
+});
+
 test("raw mutating duet commands expose local text only when explicitly requested", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_RAW_MUTATION_456";

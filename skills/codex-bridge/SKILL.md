@@ -24,7 +24,8 @@ Always run commands from the repository root.
 - Local-only commands: `doctor`, `status`, `state`, `config show`, `mode list`,
   `session show`, `deny-session list`, `token-stats --ledger`, `audit`,
   `canary-estimate`, `tail`, `duet init/show/next/pass/note`,
-  `duet packet export`, `duet step --dry-run`, and `duet loop --dry-run`.
+  `duet packet export`, `duet step --dry-run`, `duet loop --dry-run`, and
+  `duet report`.
 - Token-spending commands: `ask`, `mvs-send`, `canary`, `optimize-check`
   without `--skip-canary`, `duet step --agent minimax --yes`, and
   `duet step --agent codex --yes`, and `duet loop --yes`.
@@ -112,6 +113,7 @@ node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
 node .\bridge.mjs duet loop --yes
+node .\bridge.mjs duet report
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff path\to\handoff.md
@@ -155,6 +157,10 @@ Run `duet loop --yes` only after explicit token-spending approval. It alternates
 the current baton holder through hardened `duet step --agent <agent> --yes`,
 optionally runs a verifier between running steps, and stops on terminal status,
 limits, token budget, repeated handoff hash, apply failure, or verifier failure.
+
+Use `duet report` after a loop or step sequence for a local-only redacted run
+summary: current state, latest loop stop reasons, step counts, token usage,
+verifier summaries, transcript hashes, and suggested continuation commands.
 
 Use `duet transcript export` for a redacted JSON transcript. Add
 `--format markdown --out .\duet-transcript.local.md` for a Markdown artifact.
