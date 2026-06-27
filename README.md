@@ -327,10 +327,12 @@ checkout.
 
 Covered areas include Duet lifecycle, redacted output, `--raw`, lock handling,
 damaged runtime state, oversized handoffs, `.gitignore` coverage, safe local
-commands, and installable skill/prompt surfaces. Token-spending commands are
-not exercised by automated tests.
+commands, installable skill/prompt surfaces, and the fake-agent Duet acceptance
+harness in `examples/duet-simple-orders`. Token-spending commands are not
+exercised by automated tests.
 
-See [docs/TESTING.md](docs/TESTING.md) for details.
+See [docs/TESTING.md](docs/TESTING.md) for details. For a live Codex/MiniMax
+smoke test, see [docs/DUET_ACCEPTANCE_TEST.md](docs/DUET_ACCEPTANCE_TEST.md).
 
 GUI slash skill equivalents after `npm run install:skill`:
 

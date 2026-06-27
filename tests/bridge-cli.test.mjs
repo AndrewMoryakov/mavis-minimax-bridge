@@ -16,6 +16,15 @@ function sandbox(t) {
   return dir;
 }
 
+function sandboxWithSpace(t) {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "mavis bridge parent-"));
+  const dir = path.join(parent, "bridge repo with space");
+  fs.mkdirSync(dir);
+  fs.copyFileSync(sourceBridge, path.join(dir, "bridge.mjs"));
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  return dir;
+}
+
 function writeFile(dir, name, text) {
   fs.writeFileSync(path.join(dir, name), text, "utf8");
 }
@@ -248,6 +257,20 @@ test("state command reports duet runtime files when they exist", (t) => {
   assert.equal(state.runtimeFiles.duetState.exists, true);
   assert.equal(state.runtimeFiles.duetJournal.exists, true);
   assert.equal(state.runtimeFiles.duetLock.exists, false);
+});
+
+test("duet runtime files are written to the real directory when path contains spaces", (t) => {
+  const dir = sandboxWithSpace(t);
+  writeFile(dir, "goal.md", "Path with spaces goal");
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md"]));
+  assert.equal(fs.existsSync(path.join(dir, "duet-state.json")), true);
+  assert.equal(fs.existsSync(path.join(dir, "duet-journal.md")), true);
+  assert.equal(fs.existsSync(path.join(dir.replaceAll(" ", "%20"), "duet-state.json")), false);
+
+  const state = ok(runBridge(dir, ["state"]));
+  assert.equal(state.runtimeFiles.duetState.exists, true);
+  assert.doesNotMatch(state.runtimeFiles.duetState.path, /%20/);
 });
 
 test("runtime files, duet temp files, and local scratch files are git-ignored", () => {

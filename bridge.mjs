@@ -4,8 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const bridgeDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+const bridgeDir = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(bridgeDir, "config.json");
 const inboxPath = path.join(bridgeDir, "inbox.jsonl");
 const outboxPath = path.join(bridgeDir, "outbox.jsonl");

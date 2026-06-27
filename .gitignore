@@ -8,6 +8,7 @@
 /duet-state.json.*.tmp
 /duet-journal.md.*.tmp
 *.local.*
+/examples/duet-simple-orders/answer.json
 node_modules/
 .env
 .DS_Store

@@ -1,0 +1,10 @@
+{
+  "orders": [
+    { "id": "A100", "customer": "Anna", "currency": "USD", "amount": 120.5 },
+    { "id": "A101", "customer": "Boris", "currency": "EUR", "amount": 99.99 },
+    { "id": "A100", "customer": "Anna", "currency": "USD", "amount": 120.5 },
+    { "id": "A102", "customer": "Anna", "currency": "USD", "amount": 79.5 },
+    { "id": "A103", "customer": "Clara", "currency": "EUR", "amount": 150.01 },
+    { "id": "A104", "customer": "Boris", "currency": "USD", "amount": 200 }
+  ]
+}

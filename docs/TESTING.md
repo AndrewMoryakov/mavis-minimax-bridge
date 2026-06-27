@@ -44,6 +44,8 @@ Covered areas:
 - `state` visibility for Duet runtime files.
 - `.gitignore` coverage for runtime files and duet atomic temp files.
 - Installable skill and prompt surfaces documenting Duet Relay.
+- Duet acceptance harness for `examples/duet-simple-orders`, using fake agents
+  and the real local `duet` commands.
 
 Token-spending commands are intentionally not covered by the offline suite:
 
@@ -53,3 +55,8 @@ Token-spending commands are intentionally not covered by the offline suite:
 - `optimize-check` without `--skip-canary`
 
 Run those only as explicit manual checks after user approval.
+
+For a live two-agent smoke test, see
+[`docs/DUET_ACCEPTANCE_TEST.md`](DUET_ACCEPTANCE_TEST.md). The live test uses
+the same verifier but requires the human to open the other agent surface when
+the baton is passed.
