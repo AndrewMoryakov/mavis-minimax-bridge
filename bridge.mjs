@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const bridgeDir = path.dirname(fileURLToPath(import.meta.url));
@@ -19,6 +19,10 @@ const duetMaxEntryChars = 20000;
 const packageName = "mavis-minimax-bridge";
 const sourceIncludeMaxFiles = 80;
 const sourceIncludeMaxDirs = 160;
+const verifierMaxBytes = 256 * 1024;
+const verifierMaxArgs = 256;
+const verifierMaxArgBytes = 32 * 1024;
+const verifierMaxStreamBytes = 1024 * 1024;
 let configLoadError = null;
 
 function defaultConfig() {
@@ -140,6 +144,7 @@ function usage() {
   node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
+  node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
   node .\\bridge.mjs duet note --agent codex|minimax --note <file> [--raw]
   node .\\bridge.mjs tail [--lines <n>] [--raw]
@@ -2471,6 +2476,235 @@ function appendDuetJournal(markdown) {
   fs.appendFileSync(duetJournalPath, `\n${markdown.trim()}\n`, "utf8");
 }
 
+function verifierArgs(args) {
+  const separator = args.indexOf("--");
+  return {
+    options: separator >= 0 ? args.slice(0, separator) : args,
+    forwarded: separator >= 0 ? args.slice(separator + 1) : [],
+  };
+}
+
+function validateForwardedVerifierArgs(args) {
+  if (args.length > verifierMaxArgs) {
+    throw new Error(`too many verifier args: ${args.length} > ${verifierMaxArgs}`);
+  }
+  for (const value of args) {
+    if (String(value).includes("\0")) throw new Error("verifier args must not contain NUL bytes");
+    const bytes = Buffer.byteLength(String(value), "utf8");
+    if (bytes > verifierMaxArgBytes) {
+      throw new Error(`verifier arg too large: ${bytes} bytes > ${verifierMaxArgBytes}`);
+    }
+  }
+}
+
+function resolveVerifierPath(verifierPath) {
+  if (!verifierPath) throw new Error("--verifier is required");
+  if (String(verifierPath).includes("\0")) throw new Error("--verifier must not contain NUL bytes");
+  const resolved = path.resolve(process.cwd(), verifierPath);
+  if (!fs.existsSync(resolved)) throw new Error(`verifier file not found: ${resolved}`);
+  const realPath = realpathOrResolve(resolved);
+  if (!isPathInsideRoot(bridgeDir, realPath)) {
+    throw new Error(`verifier path escapes bridge root: ${resolved}`);
+  }
+  const ext = path.extname(realPath).toLowerCase();
+  if (![".js", ".mjs", ".cjs"].includes(ext)) {
+    throw new Error("--verifier must be a .js, .mjs, or .cjs file");
+  }
+  const stats = fs.statSync(realPath);
+  if (!stats.isFile()) throw new Error(`verifier is not a regular file: ${realPath}`);
+  if (stats.size > verifierMaxBytes) {
+    throw new Error(`verifier file too large: ${stats.size} bytes > ${verifierMaxBytes}`);
+  }
+  return { path: realPath, basename: path.basename(realPath), bytes: stats.size };
+}
+
+function verifierEnv() {
+  const allow = [
+    "PATH",
+    "Path",
+    "PATHEXT",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "ComSpec",
+    "LANG",
+    "LC_ALL",
+  ];
+  const env = {};
+  for (const key of allow) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  env.HOME = "";
+  env.USERPROFILE = "";
+  env.NODE_OPTIONS = "";
+  return env;
+}
+
+function summarizeStream(buffer, raw, totalBytes = buffer.length) {
+  const text = buffer.toString("utf8");
+  const truncated = totalBytes > verifierMaxStreamBytes || buffer.length > verifierMaxStreamBytes;
+  const capped = truncated ? text.slice(0, verifierMaxStreamBytes) : text;
+  if (raw) {
+    return {
+      mode: "raw",
+      bytes: totalBytes,
+      lines: capped ? capped.split(/\r?\n/).length : 0,
+      sha256: textDigest(capped),
+      truncated,
+      text: capped,
+    };
+  }
+  const head = capped.slice(0, 4096);
+  const tail = capped.length > 4096 ? capped.slice(-4096) : capped;
+  return {
+    mode: "redacted",
+    bytes: totalBytes,
+    lines: capped ? capped.split(/\r?\n/).length : 0,
+    sha256: textDigest(capped),
+    truncated,
+    head: textSummary(head),
+    tail: textSummary(tail),
+  };
+}
+
+function killProcessTree(pid) {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { encoding: "utf8" });
+    return;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (_) {
+    // Process may have exited between timeout and kill.
+  }
+}
+
+function runVerifierProcess(verifier, forwarded, timeoutSec, raw) {
+  return new Promise((resolve) => {
+    const startedAt = now();
+    const startedMs = Date.now();
+    const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-verify-"));
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let stdoutStoredBytes = 0;
+    let stderrStoredBytes = 0;
+    let timedOut = false;
+    let spawnError = null;
+
+    const child = spawn(process.execPath, [verifier.path, ...forwarded], {
+      cwd: scratchDir,
+      env: verifierEnv(),
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killProcessTree(child.pid);
+    }, timeoutSec * 1000);
+
+    const capture = (chunks, type) => (chunk) => {
+      const nextBytes = type === "stdout" ? stdoutBytes + chunk.length : stderrBytes + chunk.length;
+      if (type === "stdout") stdoutBytes = nextBytes;
+      else stderrBytes = nextBytes;
+      let storedBytes = type === "stdout" ? stdoutStoredBytes : stderrStoredBytes;
+      if (storedBytes >= verifierMaxStreamBytes + 1) return;
+      const remaining = verifierMaxStreamBytes + 1 - storedBytes;
+      const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+      chunks.push(slice);
+      storedBytes += slice.length;
+      if (type === "stdout") stdoutStoredBytes = storedBytes;
+      else stderrStoredBytes = storedBytes;
+    };
+
+    child.stdout.on("data", capture(stdoutChunks, "stdout"));
+    child.stderr.on("data", capture(stderrChunks, "stderr"));
+    child.on("error", (error) => {
+      spawnError = error;
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+      const stdoutBuffer = Buffer.concat(stdoutChunks);
+      const stderrBuffer = Buffer.concat(stderrChunks);
+      const endedAt = now();
+      const status = spawnError
+        ? "spawn_error"
+        : timedOut
+          ? "timeout"
+          : code === 0
+            ? "ok"
+            : "fail";
+      resolve({
+        startedAt,
+        endedAt,
+        durationMs: Date.now() - startedMs,
+        status,
+        exitCode: timedOut || spawnError ? null : code,
+        signal: timedOut ? "timeout" : signal || null,
+        error: spawnError ? spawnError.message : null,
+        stdout: summarizeStream(stdoutBuffer, raw, stdoutBytes),
+        stderr: summarizeStream(stderrBuffer, raw, stderrBytes),
+        truncated: stdoutBytes > verifierMaxStreamBytes || stderrBytes > verifierMaxStreamBytes,
+      });
+    });
+  });
+}
+
+function appendVerifyJournalEntry(agent, result) {
+  return withDuetLock(() => {
+    const state = readDuetState();
+    if (state.status !== "running") {
+      throw new Error(`cannot record verify result when duet status is ${state.status}`);
+    }
+    readDuetJournal();
+    const shortHash = result.verifier.sha256.slice(0, 8);
+    const note = `## Verify - ${agent} - ${result.endedAt}\n\nstatus=${result.status} exit=${result.exitCode ?? "null"} durationMs=${result.durationMs} verifier=${result.verifier.basename} sha=${shortHash}`;
+    appendDuetJournal(note);
+    state.updatedAt = now();
+    writeDuetState(state);
+    return { appended: true, agent, note: note.replace(/\r?\n/g, " ") };
+  });
+}
+
+async function duetVerifyCommand(args) {
+  const { options, forwarded } = verifierArgs(args);
+  const raw = options.includes("--raw");
+  const record = options.includes("--record");
+  const agent = argValue(options, "--agent", null);
+  if (record && raw) throw new Error("--raw cannot be combined with --record");
+  if (record) requireDuetAgent(agent, "--agent");
+  validateForwardedVerifierArgs(forwarded);
+  const timeoutSec = positiveIntegerArg(options, "--timeout-sec", "60");
+  if (timeoutSec > 600) throw new Error("--timeout-sec must be <= 600");
+  const verifier = resolveVerifierPath(argValue(options, "--verifier"));
+  const verifierBytes = fs.readFileSync(verifier.path);
+  const run = await runVerifierProcess(verifier, forwarded, timeoutSec, raw);
+  const result = {
+    event: "duet-verify",
+    raw,
+    redacted: !raw,
+    verifier: {
+      basename: verifier.basename,
+      bytes: verifier.bytes,
+      sha256: createHash("sha256").update(verifierBytes).digest("hex"),
+    },
+    timeoutSec,
+    args: forwarded,
+    ...run,
+    warning: raw ? "raw output contains verifier stdout/stderr up to the stream cap" : null,
+    record: null,
+  };
+  if (record) {
+    result.record = appendVerifyJournalEntry(agent, result);
+  }
+  printJson(result);
+}
+
 function nextDuetAgent(agent) {
   return agent === "codex" ? "minimax" : "codex";
 }
@@ -2606,13 +2840,14 @@ function duetNoteCommand(args) {
   printDuetEvent("duet-note", state, args);
 }
 
-function duetCommand(args) {
+async function duetCommand(args) {
   const [subcommand, ...rest] = args;
   if (!subcommand || subcommand === "help" || subcommand === "--help") {
     console.log(`Usage:
   node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
+  node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
   node .\\bridge.mjs duet note --agent codex|minimax --note <file> [--raw]`);
     return;
@@ -2624,6 +2859,7 @@ function duetCommand(args) {
     if (action === "export") return duetTranscriptExport(actionRest);
     throw new Error("unknown duet transcript command; expected `duet transcript export`");
   }
+  if (subcommand === "verify") return await duetVerifyCommand(rest);
   if (subcommand === "pass") return withDuetLock(() => duetPassCommand(rest));
   if (subcommand === "note") return withDuetLock(() => duetNoteCommand(rest));
   throw new Error(`unknown duet command: ${subcommand}`);
@@ -2655,7 +2891,7 @@ async function main() {
     if (command === "mvs-peers") return await mvsPeersCommand(args);
     if (command === "mvs-messages") return await mvsMessagesCommand(args);
     if (command === "mvs-send") return await mvsSendCommand(args);
-    if (command === "duet") return duetCommand(args);
+    if (command === "duet") return await duetCommand(args);
     if (command === "tail") return tailCommand(args);
     if (command === "stop") return await stopCommand();
     throw new Error(`unknown command: ${command}`);

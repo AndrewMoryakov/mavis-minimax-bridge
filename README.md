@@ -254,6 +254,19 @@ node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcri
 Raw transcript exports require explicit `--raw`; raw file output must use a
 `.local.*` path.
 
+Run a local verifier through the bridge:
+
+```powershell
+node .\bridge.mjs duet verify --verifier .\examples\duet-tetris-browser\verify.mjs -- --skip-relay-check
+node .\bridge.mjs duet verify --verifier .\verify.mjs --record --agent codex -- --fast
+```
+
+`duet verify` runs only Node verifier files inside the bridge root, with
+`shell: false`, a timeout, scratch working directory, and redacted output by
+default. Verifiers receive a minimal environment with home/profile and
+`NODE_OPTIONS` cleared. `--raw` prints raw verifier output up to the stream cap.
+`--record` appends metrics only to an active Duet journal.
+
 Pass the baton:
 
 ```powershell
@@ -334,6 +347,7 @@ node .\bridge.mjs mvs-send --session mvs_<id> --task path\to\task.md --yes
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
 node .\bridge.mjs duet transcript export
+node .\bridge.mjs duet verify --verifier .\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md
 node .\bridge.mjs duet note --agent codex --note .\note.local.md
 node .\bridge.mjs tail

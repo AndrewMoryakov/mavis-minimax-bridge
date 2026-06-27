@@ -33,6 +33,9 @@ Covered areas:
 - Raw output behavior for mutating Duet commands.
 - Redacted and raw `duet transcript export`, including Markdown output and raw
   output path protection.
+- `duet verify` verifier execution, redacted/raw output, non-zero exit codes,
+  timeout handling, argument forwarding, path validation, and compact journal
+  recording.
 - `maxIterations` stop behavior.
 - Explicit `human_escalation`.
 - Wrong baton and invalid agent names.

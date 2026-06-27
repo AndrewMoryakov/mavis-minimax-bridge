@@ -33,14 +33,15 @@ function readJson(dir, name) {
   return JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
 }
 
-function runBridge(dir, args) {
-  return runBridgeScript(path.join(dir, "bridge.mjs"), dir, args);
+function runBridge(dir, args, options = {}) {
+  return runBridgeScript(path.join(dir, "bridge.mjs"), dir, args, options);
 }
 
-function runBridgeScript(scriptPath, cwd, args) {
+function runBridgeScript(scriptPath, cwd, args, options = {}) {
   const result = spawnSync(process.execPath, [scriptPath, ...args], {
     cwd,
     encoding: "utf8",
+    env: options.env,
   });
   return {
     status: result.status,
@@ -175,6 +176,100 @@ test("duet transcript export supports markdown output and protects raw output pa
   const rawOut = ok(runBridge(dir, ["duet", "transcript", "export", "--raw", "--out", "transcript.local.json"]));
   assert.equal(rawOut.raw, true);
   assert.match(fs.readFileSync(path.join(dir, "transcript.local.json"), "utf8"), new RegExp(secret));
+});
+
+test("duet verify runs node verifier with redacted output by default and raw output when requested", (t) => {
+  const dir = sandbox(t);
+  const secret = "VERIFY_SECRET_SHOULD_BE_RAW_ONLY";
+  writeFile(dir, "verify.mjs", `console.log(${JSON.stringify(secret)}); console.error("ERR_LINE");`);
+
+  const redacted = ok(runBridge(dir, ["duet", "verify", "--verifier", "verify.mjs"]));
+  assert.equal(redacted.event, "duet-verify");
+  assert.equal(redacted.status, "ok");
+  assert.equal(redacted.exitCode, 0);
+  assert.equal(redacted.redacted, true);
+  assert.equal(redacted.stdout.mode, "redacted");
+  assert.equal(typeof redacted.stdout.sha256, "string");
+  assert.doesNotMatch(JSON.stringify(redacted), new RegExp(secret));
+
+  const raw = ok(runBridge(dir, ["duet", "verify", "--verifier", "verify.mjs", "--raw"]));
+  assert.equal(raw.raw, true);
+  assert.equal(raw.stdout.mode, "raw");
+  assert.match(raw.stdout.text, new RegExp(secret));
+  assert.match(raw.stderr.text, /ERR_LINE/);
+});
+
+test("duet verify reports failures, forwards args after separator, and rejects unsafe inputs", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "args.mjs", "console.log(JSON.stringify(process.argv.slice(2)));");
+  writeFile(dir, "fail.mjs", "console.error('FAIL_STDERR_SECRET'); process.exit(7);");
+  writeFile(dir, "bad.txt", "console.log('bad');");
+  writeFile(dir, "large.mjs", "x".repeat(256 * 1024 + 1));
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-verify-outside-"));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  writeFile(other, "outside.mjs", "console.log('outside');");
+
+  const argsRun = ok(runBridge(dir, ["duet", "verify", "--verifier", "args.mjs", "--raw", "--", "--fast", "name=value"]));
+  assert.deepEqual(JSON.parse(argsRun.stdout.text.trim()), ["--fast", "name=value"]);
+
+  const failed = ok(runBridge(dir, ["duet", "verify", "--verifier", "fail.mjs"]));
+  assert.equal(failed.status, "fail");
+  assert.equal(failed.exitCode, 7);
+  assert.doesNotMatch(JSON.stringify(failed), /FAIL_STDERR_SECRET/);
+
+  fails(runBridge(dir, ["duet", "verify", "--verifier", "missing.mjs"]), /verifier file not found/);
+  fails(runBridge(dir, ["duet", "verify", "--verifier", "large.mjs"]), /verifier file too large/);
+  fails(runBridge(dir, ["duet", "verify", "--verifier", "bad.txt"]), /\.js, \.mjs, or \.cjs/);
+  fails(runBridge(dir, ["duet", "verify", "--verifier", path.join(other, "outside.mjs")]), /escapes bridge root/);
+  fails(
+    runBridge(dir, ["duet", "verify", "--verifier", "args.mjs", "--", ...Array.from({ length: 257 }, (_, index) => `arg-${index}`)]),
+    /too many verifier args/,
+  );
+});
+
+test("duet verify runs with a minimal environment", (t) => {
+  const dir = sandbox(t);
+  writeFile(
+    dir,
+    "env.mjs",
+    "console.log(JSON.stringify({ home: process.env.HOME, userprofile: process.env.USERPROFILE, mavis: process.env.MAVIS_SECRET, nodeOptions: process.env.NODE_OPTIONS }));",
+  );
+
+  const env = { ...process.env, HOME: "HOME_SECRET", USERPROFILE: "PROFILE_SECRET", MAVIS_SECRET: "MAVIS_SECRET", NODE_OPTIONS: "" };
+  const result = ok(runBridge(dir, ["duet", "verify", "--verifier", "env.mjs", "--raw"], { env }));
+  const childEnv = JSON.parse(result.stdout.text.trim());
+  assert.deepEqual(childEnv, { home: "", userprofile: "", nodeOptions: "" });
+});
+
+test("duet verify enforces timeout", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "hang.mjs", "setInterval(() => {}, 1000);");
+
+  const timedOut = ok(runBridge(dir, ["duet", "verify", "--verifier", "hang.mjs", "--timeout-sec", "1"]));
+  assert.equal(timedOut.status, "timeout");
+  assert.equal(timedOut.exitCode, null);
+  assert.equal(timedOut.signal, "timeout");
+});
+
+test("duet verify record appends compact journal note only for active relay", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Verify record goal");
+  writeFile(dir, "done.md", "Done");
+  writeFile(dir, "verify.mjs", "console.log('VERIFY_RECORD_SECRET');");
+
+  fails(runBridge(dir, ["duet", "verify", "--verifier", "verify.mjs", "--record", "--agent", "codex"]), /duet state is not initialized/);
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex"]));
+
+  const recorded = ok(runBridge(dir, ["duet", "verify", "--verifier", "verify.mjs", "--record", "--agent", "codex"]));
+  assert.equal(recorded.record.appended, true);
+  const journal = fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8");
+  assert.match(journal, /Verify - codex/);
+  assert.match(journal, /status=ok/);
+  assert.doesNotMatch(journal, /VERIFY_RECORD_SECRET/);
+
+  fails(runBridge(dir, ["duet", "verify", "--verifier", "verify.mjs", "--raw", "--record", "--agent", "codex"]), /--raw cannot be combined with --record/);
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--status", "done", "--handoff", "done.md"]));
+  fails(runBridge(dir, ["duet", "verify", "--verifier", "verify.mjs", "--record", "--agent", "codex"]), /cannot record verify result when duet status is done/);
 });
 
 test("duet done state blocks further passes without --force", (t) => {

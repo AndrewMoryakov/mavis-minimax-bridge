@@ -56,6 +56,7 @@ node .\bridge.mjs session show
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs duet show
 node .\bridge.mjs duet transcript export
+node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 ```
 
 ### `/bridge doctor`
@@ -166,6 +167,20 @@ node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcri
 
 Export a redacted transcript for review. Use `--raw` only when exact local goal,
 handoff, and journal text are intentionally needed.
+
+### `/bridge duet verify <verifier-file>`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet verify --verifier path\to\verify.mjs
+node .\bridge.mjs duet verify --verifier path\to\verify.mjs --record --agent minimax
+```
+
+Run a local Node verifier through the bridge with redacted output by default.
+The verifier gets a minimal environment with home/profile and `NODE_OPTIONS`
+cleared. Use `--record --agent codex|minimax` only when an active relay should
+receive a compact metrics-only verification note.
 
 ### `/bridge duet init <goal-file>`
 

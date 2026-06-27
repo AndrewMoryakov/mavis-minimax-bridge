@@ -36,6 +36,7 @@ node .\bridge.mjs ask --dry-run --raw --task .\task.md
 node .\bridge.mjs duet init --goal .\duet-goal.local.md
 node .\bridge.mjs duet show
 node .\bridge.mjs duet transcript export
+node .\bridge.mjs duet verify --verifier .\verify.mjs
 npm run test:release
 ```
 

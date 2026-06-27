@@ -102,6 +102,7 @@ a model prompt:
 node .\bridge.mjs duet init --goal path\to\goal.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
 node .\bridge.mjs duet transcript export
+node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff path\to\handoff.md
 node .\bridge.mjs duet note --agent codex --note path\to\note.md
 ```
@@ -121,6 +122,11 @@ Use `duet transcript export` for a redacted JSON transcript. Add
 `--format markdown --out .\duet-transcript.local.md` for a Markdown artifact.
 Use `--raw` only when local goal, handoff, and journal text are intentionally
 needed.
+
+Use `duet verify --verifier <file>` to run a local Node verifier through the
+bridge. Verifier output is redacted by default and home/profile plus
+`NODE_OPTIONS` are cleared; `--record --agent codex|minimax` adds a compact
+metrics-only note to an active Duet journal.
 
 ### Natural Language Start
 

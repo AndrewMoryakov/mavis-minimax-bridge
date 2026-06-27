@@ -29,4 +29,6 @@ Rules:
 - Duet Relay does not wake, message, or activate the other agent automatically.
 - Duet output is redacted by default; use `--raw` only when the user explicitly
   needs local goal, handoff, or journal text in stdout.
+- Use `duet verify --verifier <file>` for deterministic local verifier scripts;
+  record only compact metrics into the journal with `--record --agent ...`.
 - Report the commands run, whether tokens were spent, warnings, and next action.

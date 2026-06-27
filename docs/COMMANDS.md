@@ -280,6 +280,8 @@ node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iter
 node .\bridge.mjs duet show
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcript.local.md
+node .\bridge.mjs duet verify --verifier .\examples\duet-tetris-browser\verify.mjs -- --skip-relay-check
+node .\bridge.mjs duet verify --verifier .\verify.mjs --record --agent codex -- --fast
 node .\bridge.mjs duet note --agent codex --note .\note.local.md
 node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md
 node .\bridge.mjs duet pass --from minimax --status done --handoff .\handoff.local.md
@@ -310,6 +312,15 @@ intentionally need local relay text in stdout.
 Use `duet transcript export` to produce a redacted JSON or Markdown transcript
 for review. Add `--raw` only when local goal, handoff, and journal text are
 intentionally needed. Raw file exports require a `.local.*` output path.
+
+Use `duet verify` to run a Node verifier through the bridge. Verifiers must be
+`.js`, `.mjs`, or `.cjs` files inside the bridge root. The command uses
+`shell: false`, a scratch working directory, a timeout, and redacted
+stdout/stderr summaries by default. Verifiers receive a minimal environment
+with home/profile and `NODE_OPTIONS` cleared. Add `--raw` only when verifier
+output text is intentionally needed; raw streams are still capped. Add
+`--record --agent codex|minimax` to append a
+compact metrics-only verification note to an active Duet journal.
 
 For the simplest user flow, describe the task to Codex or MiniMax and end with
 `let's go`. See [LETS_GO.md](LETS_GO.md).
