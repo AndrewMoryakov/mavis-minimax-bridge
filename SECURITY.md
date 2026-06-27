@@ -39,12 +39,15 @@ Do not commit or publish:
 - `ledger.jsonl`;
 - `inbox.jsonl`;
 - `outbox.jsonl`;
+- `duet-state.json`;
+- `duet-journal.md`;
+- `duet.lock`;
 - `*.local.*`;
 - `.env`;
 - MiniMax, Mavis, OpenRouter, or GitHub tokens.
 
 These files are local runtime state. They may contain prompts, session ids,
-usage observations, paths, or other sensitive information.
+usage observations, paths, relay handoffs, or other sensitive information.
 
 ## Safe Operation
 

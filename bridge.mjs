@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 const bridgeDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -9,6 +10,11 @@ const configPath = path.join(bridgeDir, "config.json");
 const inboxPath = path.join(bridgeDir, "inbox.jsonl");
 const outboxPath = path.join(bridgeDir, "outbox.jsonl");
 const ledgerPath = path.join(bridgeDir, "ledger.jsonl");
+const duetStatePath = path.join(bridgeDir, "duet-state.json");
+const duetJournalPath = path.join(bridgeDir, "duet-journal.md");
+const duetLockPath = path.join(bridgeDir, "duet.lock");
+const duetLockStaleMs = 10 * 60 * 1000;
+const duetMaxEntryChars = 20000;
 
 function defaultConfig() {
   return {
@@ -114,6 +120,10 @@ function usage() {
   node .\\bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-send --task <file> --yes [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-send --content <text> --allow-inline-content --yes [--session <mvs-id>] [--daemon-port <port>]
+  node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
+  node .\\bridge.mjs duet show [--raw]
+  node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
+  node .\\bridge.mjs duet note --agent codex|minimax --note <file> [--raw]
   node .\\bridge.mjs tail [--lines <n>] [--raw]
   node .\\bridge.mjs stop`);
 }
@@ -1252,6 +1262,9 @@ async function stateCommand() {
       ledger: runtimeFileInfo(ledgerPath),
       inbox: runtimeFileInfo(inboxPath),
       outbox: runtimeFileInfo(outboxPath),
+      duetState: runtimeFileInfo(duetStatePath),
+      duetJournal: runtimeFileInfo(duetJournalPath),
+      duetLock: runtimeFileInfo(duetLockPath),
     },
     latestLedgerEvents: events.slice(-5).map((event) => ({
       ts: event.ts || null,
@@ -1596,6 +1609,301 @@ function tailCommand(args) {
   }
 }
 
+const duetAgents = new Set(["codex", "minimax"]);
+const duetStatuses = new Set(["running", "done", "human_escalation"]);
+
+function requireDuetAgent(value, label) {
+  if (!duetAgents.has(value)) {
+    throw new Error(`${label} must be one of: codex, minimax`);
+  }
+  return value;
+}
+
+function requireDuetStatus(value) {
+  if (!duetStatuses.has(value)) {
+    throw new Error("status must be one of: running, done, human_escalation");
+  }
+  return value;
+}
+
+function requireDuetPositiveInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return value;
+}
+
+function readRequiredText(filePath, label, maxChars = null) {
+  if (!filePath) throw new Error(`${label} is required`);
+  const resolved = path.resolve(process.cwd(), filePath);
+  if (!fs.existsSync(resolved)) throw new Error(`${label} file not found: ${resolved}`);
+  const text = fs.readFileSync(resolved, "utf8").trim();
+  if (!text) throw new Error(`${label} file is empty: ${resolved}`);
+  if (maxChars !== null && text.length > maxChars) {
+    throw new Error(`${label} file is too large (${text.length} chars); keep duet entries <= ${maxChars} chars`);
+  }
+  return text;
+}
+
+function writeTextAtomic(filePath, text) {
+  const tempPath = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, text, "utf8");
+  fs.renameSync(tempPath, filePath);
+}
+
+function writeDuetState(state) {
+  writeTextAtomic(duetStatePath, stableStringify(state));
+}
+
+function validateDuetState(state) {
+  const fail = (message) => {
+    throw new Error(`invalid duet state: ${message}`);
+  };
+  if (!state || typeof state !== "object" || Array.isArray(state)) fail("expected object");
+  if (typeof state.goal !== "string" || !state.goal.trim()) fail("goal must be a non-empty string");
+  if (!duetStatuses.has(state.status)) fail("status must be one of: running, done, human_escalation");
+  if (state.status === "running") {
+    if (!duetAgents.has(state.baton)) fail("baton must be one of: codex, minimax");
+  } else if (state.baton !== null) {
+    fail("baton must be null unless status is running");
+  }
+  if (!Number.isSafeInteger(state.iteration) || state.iteration < 1) fail("iteration must be a positive integer");
+  if (!Number.isSafeInteger(state.maxIterations) || state.maxIterations < 1) fail("maxIterations must be a positive integer");
+  if (state.iteration > state.maxIterations) fail("iteration cannot exceed maxIterations");
+  if (typeof state.lastHandoff !== "string") fail("lastHandoff must be a string");
+  if (state.humanEscalation !== null && typeof state.humanEscalation !== "string") {
+    fail("humanEscalation must be null or a string");
+  }
+  if (state.status === "human_escalation" && !state.humanEscalation) {
+    fail("humanEscalation is required when status is human_escalation");
+  }
+  return state;
+}
+
+function readDuetState() {
+  if (!fs.existsSync(duetStatePath)) {
+    throw new Error("duet state is not initialized; run `duet init` first");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(duetStatePath, "utf8"));
+  } catch (error) {
+    throw new Error(`duet state is not valid JSON: ${error.message}`);
+  }
+  return validateDuetState(parsed);
+}
+
+function readDuetJournal() {
+  if (!fs.existsSync(duetJournalPath)) {
+    throw new Error("duet journal is missing; restore duet-journal.md or run `duet init --force`");
+  }
+  const journal = fs.readFileSync(duetJournalPath, "utf8");
+  if (!journal.trim()) {
+    throw new Error("duet journal is empty; restore duet-journal.md or run `duet init --force`");
+  }
+  return journal;
+}
+
+function truncateDuetText(text, limit = 2000) {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit - 20)}\n...[truncated]`;
+}
+
+function textDigest(text) {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+function textSummary(text) {
+  return {
+    chars: text.length,
+    lines: text ? text.split(/\r?\n/).length : 0,
+    sha256: textDigest(text),
+  };
+}
+
+function publicDuetState(state) {
+  return {
+    baton: state.baton,
+    iteration: state.iteration,
+    maxIterations: state.maxIterations,
+    status: state.status,
+    goal: textSummary(state.goal),
+    lastHandoff: state.lastHandoff ? textSummary(state.lastHandoff) : null,
+    humanEscalation: state.humanEscalation ? textSummary(state.humanEscalation) : null,
+    createdAt: state.createdAt || null,
+    updatedAt: state.updatedAt || null,
+  };
+}
+
+function printDuetEvent(event, state, args, extra = {}) {
+  const raw = args.includes("--raw");
+  printJson({
+    event,
+    statePath: duetStatePath,
+    journalPath: duetJournalPath,
+    raw,
+    ...extra,
+    state: raw ? state : publicDuetState(state),
+  });
+}
+
+function appendDuetJournal(markdown) {
+  readDuetJournal();
+  fs.appendFileSync(duetJournalPath, `\n${markdown.trim()}\n`, "utf8");
+}
+
+function nextDuetAgent(agent) {
+  return agent === "codex" ? "minimax" : "codex";
+}
+
+function positiveIntegerArg(args, name, fallback) {
+  const raw = argValue(args, name, fallback);
+  const value = Number(raw);
+  return requireDuetPositiveInteger(value, name);
+}
+
+function withDuetLock(callback) {
+  let handle = null;
+  try {
+    if (fs.existsSync(duetLockPath)) {
+      const stats = fs.statSync(duetLockPath);
+      if (Date.now() - stats.mtimeMs > duetLockStaleMs) {
+        fs.unlinkSync(duetLockPath);
+      }
+    }
+    handle = fs.openSync(duetLockPath, "wx");
+    fs.writeFileSync(handle, stableStringify({ pid: process.pid, createdAt: now() }), "utf8");
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      throw new Error("duet lock is held by another command; retry after it finishes");
+    }
+    throw error;
+  }
+  try {
+    return callback();
+  } finally {
+    if (handle !== null) fs.closeSync(handle);
+    try {
+      fs.unlinkSync(duetLockPath);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+}
+
+function duetInitCommand(args) {
+  if ((fs.existsSync(duetStatePath) || fs.existsSync(duetJournalPath)) && !args.includes("--force")) {
+    throw new Error("duet state already exists; use --force to reinitialize");
+  }
+  const goal = readRequiredText(argValue(args, "--goal"), "--goal", duetMaxEntryChars);
+  const baton = requireDuetAgent(argValue(args, "--baton", "codex"), "--baton");
+  const maxIterations = positiveIntegerArg(args, "--max-iterations", "12");
+  const ts = now();
+  const state = {
+    goal,
+    baton,
+    iteration: 1,
+    maxIterations,
+    status: "running",
+    lastHandoff: "",
+    humanEscalation: null,
+    createdAt: ts,
+    updatedAt: ts,
+  };
+  writeDuetState(state);
+  fs.writeFileSync(
+    duetJournalPath,
+    `# Duet Journal\n\n## Goal\n\n${goal}\n\n## Current State\n\nBaton: ${baton}\nStatus: running\n\n## Decisions\n\n## Done\n\n## Open Questions\n\n## Last Handoff\n`,
+    "utf8",
+  );
+  appendJsonl(ledgerPath, { event: "duet-init", baton, maxIterations });
+  printDuetEvent("duet-init", state, args);
+}
+
+function duetShowCommand(args) {
+  const state = readDuetState();
+  const journal = readDuetJournal();
+  const extra = args.includes("--raw")
+    ? { journalTail: journal.trim().split(/\r?\n/).slice(-80).join("\n") }
+    : { journal: textSummary(journal) };
+  printDuetEvent("duet-show", state, args, extra);
+}
+
+function duetPassCommand(args) {
+  const state = readDuetState();
+  const from = requireDuetAgent(argValue(args, "--from"), "--from");
+  if (state.status !== "running" && !args.includes("--force")) {
+    throw new Error(`duet status is ${state.status}; use --force to append anyway`);
+  }
+  if (state.baton !== from && !args.includes("--force")) {
+    throw new Error(`baton is held by ${state.baton}; use --force to override`);
+  }
+  const status = requireDuetStatus(argValue(args, "--status", "running"));
+  const to = status === "running"
+    ? requireDuetAgent(argValue(args, "--to", nextDuetAgent(from)), "--to")
+    : argValue(args, "--to", null);
+  if (to) requireDuetAgent(to, "--to");
+
+  const handoff = readRequiredText(argValue(args, "--handoff"), "--handoff", duetMaxEntryChars);
+  let nextIteration = state.iteration;
+  let nextStatus = status;
+  let humanEscalation = status === "human_escalation" ? handoff : state.humanEscalation;
+  let baton = status === "running" ? to : null;
+  if (status === "running") {
+    if (state.iteration >= state.maxIterations) {
+      nextStatus = "human_escalation";
+      humanEscalation = `maxIterations reached (${state.maxIterations})`;
+      baton = null;
+    } else {
+      nextIteration = state.iteration + 1;
+    }
+  }
+
+  const ts = now();
+  appendDuetJournal(`## Turn ${state.iteration} - ${from}${baton ? ` -> ${baton}` : ""} - ${ts}\n\nStatus: ${nextStatus}\n\n${handoff}`);
+  const nextState = {
+    ...state,
+    baton,
+    iteration: nextIteration,
+    status: nextStatus,
+    lastHandoff: truncateDuetText(handoff),
+    humanEscalation,
+    updatedAt: ts,
+  };
+  writeDuetState(nextState);
+  appendJsonl(ledgerPath, { event: "duet-pass", from, to: baton, status: nextStatus, iteration: nextState.iteration });
+  printDuetEvent("duet-pass", nextState, args);
+}
+
+function duetNoteCommand(args) {
+  const state = readDuetState();
+  const agent = requireDuetAgent(argValue(args, "--agent"), "--agent");
+  const note = readRequiredText(argValue(args, "--note"), "--note", duetMaxEntryChars);
+  const ts = now();
+  appendDuetJournal(`## Note - ${agent} - ${ts}\n\n${note}`);
+  state.updatedAt = ts;
+  writeDuetState(state);
+  appendJsonl(ledgerPath, { event: "duet-note", agent, iteration: state.iteration });
+  printDuetEvent("duet-note", state, args);
+}
+
+function duetCommand(args) {
+  const [subcommand, ...rest] = args;
+  if (!subcommand || subcommand === "help" || subcommand === "--help") {
+    console.log(`Usage:
+  node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
+  node .\\bridge.mjs duet show [--raw]
+  node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
+  node .\\bridge.mjs duet note --agent codex|minimax --note <file> [--raw]`);
+    return;
+  }
+  if (subcommand === "init") return withDuetLock(() => duetInitCommand(rest));
+  if (subcommand === "show") return duetShowCommand(rest);
+  if (subcommand === "pass") return withDuetLock(() => duetPassCommand(rest));
+  if (subcommand === "note") return withDuetLock(() => duetNoteCommand(rest));
+  throw new Error(`unknown duet command: ${subcommand}`);
+}
+
 async function stopCommand() {
   console.log("Bridge has no daemon process. Stop opencode serve from MiniMax Code or restart it explicitly if needed.");
 }
@@ -1620,6 +1928,7 @@ async function main() {
     if (command === "mvs-peers") return await mvsPeersCommand(args);
     if (command === "mvs-messages") return await mvsMessagesCommand(args);
     if (command === "mvs-send") return await mvsSendCommand(args);
+    if (command === "duet") return duetCommand(args);
     if (command === "tail") return tailCommand(args);
     if (command === "stop") return await stopCommand();
     throw new Error(`unknown command: ${command}`);

@@ -251,6 +251,35 @@ ledger/outbox.
 Prefer `mvs-send --task` over `--content`; inline content can be captured by
 shell history or process inspection.
 
+## Duet Relay
+
+These commands are local-only and do not call MiniMax:
+
+```powershell
+node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
+node .\bridge.mjs duet show
+node .\bridge.mjs duet note --agent codex --note .\note.local.md
+node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md
+node .\bridge.mjs duet pass --from minimax --status done --handoff .\handoff.local.md
+node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff .\handoff.local.md
+```
+
+`duet init` creates `duet-state.json` and `duet-journal.md` in the repository
+root. They are local runtime files and can contain goals, handoffs, local paths,
+and coordination history.
+
+Mutating duet commands use a short-lived `duet.lock` file to avoid overlapping
+updates from two CLI processes. A lock older than ten minutes is treated as
+stale.
+
+Use `duet pass` to transfer the baton or stop the relay with `done` /
+`human_escalation`. `--max-iterations` is a safety limit; when reached, the
+relay stops with `human_escalation`.
+
+Duet command output is redacted by default: goal, handoff, escalation text, and
+journal content are summarized by size and SHA-256. Add `--raw` only when you
+intentionally need local relay text in stdout.
+
 ## Logs
 
 ```powershell
@@ -259,6 +288,7 @@ node .\bridge.mjs tail --lines 50
 node .\bridge.mjs tail --raw
 ```
 
-`ledger.jsonl`, `inbox.jsonl`, and `outbox.jsonl` are local runtime files and
-are ignored by git.
+`ledger.jsonl`, `inbox.jsonl`, `outbox.jsonl`, `duet-state.json`,
+`duet-journal.md`, and `duet.lock` are local runtime files and are ignored by
+git.
 `tail` redacts sensitive payloads by default; `--raw` prints exact local JSONL.

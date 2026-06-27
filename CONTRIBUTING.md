@@ -35,10 +35,11 @@ test you ran and the session safety assumptions.
 ## Contribution Guidelines
 
 - Do not commit `config.json`, `ledger.jsonl`, `inbox.jsonl`, `outbox.jsonl`,
-  `*.local.*`, `.env`, API keys, or session logs.
+  `duet-state.json`, `duet-journal.md`, `duet.lock`, `*.local.*`, `.env`,
+  API keys, or session logs.
 - Keep bridge commands explicit; avoid hidden background sends.
 - Prefer dry-run, estimate, status, and audit commands before live canaries.
-- Keep prompts compact and bounded.
+- Keep prompts and duet handoffs compact and bounded.
 - Preserve the local JSONL file model for runtime state.
 - Add README updates when adding commands, modes, config keys, or output fields.
 - Do not make the bridge an internet-facing service.

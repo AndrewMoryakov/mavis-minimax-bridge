@@ -17,11 +17,15 @@ These files are intentionally ignored by git:
 - `ledger.jsonl`;
 - `inbox.jsonl`;
 - `outbox.jsonl`;
+- `duet-state.json`;
+- `duet-journal.md`;
+- `duet.lock`;
 - `*.local.*`.
 
 They may contain session ids, private paths, prompts, token observations, or
-coordination history. Back them up separately if you want to keep them across a
-machine reinstall.
+coordination history. `duet.lock` is transient and does not need backup. Back
+up the other local files separately if you want to keep them across a machine
+reinstall.
 
 ## Restore Commands
 
@@ -49,13 +53,16 @@ node .\bridge.mjs status
 node .\bridge.mjs optimize-check --skip-canary
 ```
 
-`npm run init` creates missing runtime files without overwriting existing ones.
+`npm run init` creates the base runtime files without overwriting existing ones.
+Duet relay files are created by `node .\bridge.mjs duet init --goal <file>`.
 Use `node .\scripts\init-runtime.mjs --force` only when you intentionally want
-to overwrite local runtime files.
+to overwrite base runtime files.
 
 ## Restore Local State
 
-If you backed up `config.json`, restore it after `npm run init`, then check:
+If you backed up `config.json`, restore it after `npm run init`. If you backed
+up an active relay, restore `duet-state.json` and `duet-journal.md` together.
+Then check:
 
 ```powershell
 node .\bridge.mjs state

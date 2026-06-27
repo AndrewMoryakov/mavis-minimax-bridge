@@ -8,8 +8,9 @@ npm run install:codex-skill
 npm run install:codex-slash
 ```
 
-This creates ignored local files: `config.json`, `ledger.jsonl`, `inbox.jsonl`,
-and `outbox.jsonl`.
+This creates ignored base runtime files: `config.json`, `ledger.jsonl`,
+`inbox.jsonl`, and `outbox.jsonl`. Duet relay files are created separately by
+`node .\bridge.mjs duet init --goal <file>`.
 
 Common commands:
 
@@ -29,6 +30,8 @@ node .\bridge.mjs optimize-check --skip-canary
 node .\bridge.mjs optimize-check --yes --session mvs_<id>
 node .\bridge.mjs optimize-check --yes --long-prompt .\stable-prefix.txt
 node .\bridge.mjs ask --yes --mode review-only --task .\task.md
+node .\bridge.mjs duet init --goal .\duet-goal.local.md
+node .\bridge.mjs duet show
 ```
 
 After `npm run install:codex-slash`, restart Codex CLI and use:
@@ -54,5 +57,8 @@ Safety notes:
   `--allow-inline-content` because shells can retain command history.
 - `--long-prompt` is opt-in because it intentionally spends more tokens.
 - Put burned, orchestration, or expensive sessions into `denySessions`.
-- `ledger.jsonl`, `inbox.jsonl`, and `outbox.jsonl` are local runtime files and
-  should not be committed.
+- `ledger.jsonl`, `inbox.jsonl`, `outbox.jsonl`, `duet-state.json`,
+  `duet-journal.md`, and `duet.lock` are local runtime files and should not be
+  committed.
+- Duet commands redact relay content by default; use `--raw` only when you
+  intentionally need local goal, handoff, or journal text.

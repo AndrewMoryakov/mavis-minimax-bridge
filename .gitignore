@@ -2,6 +2,9 @@
 /ledger.jsonl
 /inbox.jsonl
 /outbox.jsonl
+/duet-state.json
+/duet-journal.md
+/duet.lock
 *.local.*
 node_modules/
 .env

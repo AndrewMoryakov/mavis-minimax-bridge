@@ -7,6 +7,15 @@ The bridge talks to the Desktop-owned `opencode serve` HTTP API and, when a
 real `mvs_...` session id is supplied, can also query `mavis usage session` for
 token metrics.
 
+It provides:
+
+- local inspection of the active MiniMax Code / OpenCode route;
+- review-only collaboration turns through a bounded bridge command;
+- direct posting to an explicit `mvs_...` session when the user approves it;
+- token/canary checks for prompt-cache and context-budget behavior;
+- a minimal Duet Relay for Codex and MiniMax baton-passing without a workflow
+  engine.
+
 ## Status
 
 Experimental, Windows-first, and intentionally conservative. It is designed for
@@ -36,8 +45,10 @@ inbox.jsonl
 outbox.jsonl
 ```
 
-These files are ignored by git. Keep local session ids, paths, deny-lists, and
-coordination history there.
+These base runtime files are ignored by git. Duet Relay creates
+`duet-state.json`, `duet-journal.md`, and a short-lived `duet.lock` only when
+you initialize a relay. Keep local session ids, paths, deny-lists, and
+coordination history in runtime files, never in committed docs.
 
 ## AI Agent Install
 
@@ -169,9 +180,70 @@ Repeated `--task` values are sent as follow-up turns in one temporary
 `ses_...` session. Use this for guided reviews where MiniMax needs a few compact
 questions to discover problems.
 
+For longer Codex and MiniMax collaboration, keep orchestration thin. The minimal
+baton-passing convention is documented in [`docs/DUET_RELAY.md`](docs/DUET_RELAY.md).
+
+## Duet Relay
+
+Duet Relay is a tiny local state machine for alternating work between Codex and
+MiniMax after the human gives the initial goal. It deliberately avoids hard-coded
+roles, project templates, and background sends. The agents decide what to do
+next, while the bridge preserves the shared state and stops runaway loops.
+
+Initialize a relay from a local goal file:
+
+```powershell
+node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
+```
+
+Inspect the relay:
+
+```powershell
+node .\bridge.mjs duet show
+```
+
+By default, duet commands redact the goal, handoff, escalation text, and journal
+content in stdout. They print sizes and SHA-256 digests instead. Use `--raw`
+only when you intentionally need the full local relay text:
+
+```powershell
+node .\bridge.mjs duet show --raw
+```
+
+Pass the baton:
+
+```powershell
+node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md
+node .\bridge.mjs duet pass --from minimax --to codex --handoff .\handoff.local.md
+```
+
+Record a note without changing the baton:
+
+```powershell
+node .\bridge.mjs duet note --agent codex --note .\note.local.md
+```
+
+Finish or return to the human:
+
+```powershell
+node .\bridge.mjs duet pass --from minimax --status done --handoff .\handoff.local.md
+node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff .\handoff.local.md
+```
+
+Operational rules:
+
+- `duet-state.json` stores the validated relay state.
+- `duet-journal.md` stores compact conclusions and handoffs.
+- `duet.lock` prevents overlapping mutating commands from racing.
+- Goal, handoff, and note files are limited to 20000 characters each.
+- `--max-iterations` is a safety limit; when reached, the relay stops with
+  `human_escalation`.
+- Duet commands are local-only and do not call MiniMax. Sending work to MiniMax
+  remains an explicit separate step through `ask` or `mvs-send`.
+
 Rules for agents:
 
-- Do not commit or publish `config.json`, `ledger.jsonl`, `inbox.jsonl`, or `outbox.jsonl`.
+- Do not commit or publish `config.json`, `ledger.jsonl`, `inbox.jsonl`, `outbox.jsonl`, `duet-state.json`, `duet-journal.md`, or `duet.lock`.
 - Do not use `mvs-send`, `canary`, `ask`, or `optimize-check` without understanding that they may spend tokens.
 - The CLI requires `--yes` for token-spending bridge commands; `optimize-check --skip-canary` does not start a model turn.
 - Prefer `review-only` tasks before asking MiniMax to propose changes.
@@ -211,6 +283,10 @@ node .\bridge.mjs mvs-status --session mvs_<id>
 node .\bridge.mjs mvs-peers --session mvs_<id>
 node .\bridge.mjs mvs-messages --session mvs_<id> --limit 5
 node .\bridge.mjs mvs-send --session mvs_<id> --task path\to\task.md --yes
+node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
+node .\bridge.mjs duet show
+node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md
+node .\bridge.mjs duet note --agent codex --note .\note.local.md
 node .\bridge.mjs tail
 ```
 
@@ -318,6 +394,17 @@ npm run prefix:build
 node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repeat-long 2
 ```
 
+## Documentation Map
+
+- [docs/COMMANDS.md](docs/COMMANDS.md): full CLI command reference.
+- [docs/DUET_RELAY.md](docs/DUET_RELAY.md): minimal baton-passing protocol for
+  Codex and MiniMax.
+- [docs/RUNTIME_FILES.md](docs/RUNTIME_FILES.md): local runtime file contract.
+- [docs/USAGE.md](docs/USAGE.md): compact day-to-day usage sheet.
+- [docs/RESTORE_AFTER_UPDATE.md](docs/RESTORE_AFTER_UPDATE.md): restore
+  checklist after MiniMax Code updates or reinstall.
+- [SECURITY.md](SECURITY.md): local-file and prompt-safety policy.
+
 ## Safety
 
 - `ask`, `canary`, `mvs-send`, and full `optimize-check` require `--yes`
@@ -326,7 +413,8 @@ node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repe
   intentionally need exact local JSONL contents.
 - `--long-prompt` is opt-in because it spends more tokens.
 - Put burned, orchestration, or expensive sessions in `denySessions`.
-- `ledger.jsonl`, `inbox.jsonl`, and `outbox.jsonl` are local audit files and
+- `ledger.jsonl`, `inbox.jsonl`, `outbox.jsonl`, `duet-state.json`,
+  `duet-journal.md`, and `duet.lock` are local audit/coordination files and
   are ignored by git.
 - stdout escapes non-ASCII by default for legacy Windows admin consoles, while
   JSONL files are written as UTF-8.

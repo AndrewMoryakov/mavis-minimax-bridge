@@ -1,18 +1,21 @@
 # Runtime Files
 
-The bridge uses four local runtime files in the repository root:
+The bridge uses local runtime files in the repository root:
 
 ```text
 config.json
 ledger.jsonl
 inbox.jsonl
 outbox.jsonl
+duet-state.json
+duet-journal.md
+duet.lock
 ```
 
 They are intentionally ignored by git because they can contain local paths,
-session ids, canary results, and coordination history.
+session ids, canary results, handoffs, and coordination history.
 
-Initialize them with:
+Initialize the base runtime files with:
 
 ```powershell
 npm run init
@@ -30,13 +33,21 @@ Use empty JSONL logs instead of scaffold notes:
 node .\scripts\init-runtime.mjs --empty-jsonl
 ```
 
-Recreate files in another directory:
+`duet-state.json` and `duet-journal.md` are created by `duet init`, not by the
+runtime initializer. `duet.lock` is a short-lived guard file created while a
+duet command updates state.
+
+```powershell
+node .\bridge.mjs duet init --goal .\duet-goal.local.md
+```
+
+Recreate base runtime files in another directory:
 
 ```powershell
 node .\scripts\init-runtime.mjs --target C:\path\to\bridge-runtime
 ```
 
-Overwrite existing files only when you mean it:
+Overwrite existing base runtime files only when you mean it:
 
 ```powershell
 node .\scripts\init-runtime.mjs --force
