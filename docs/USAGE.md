@@ -15,6 +15,7 @@ This creates ignored base runtime files: `config.json`, `ledger.jsonl`,
 Common commands:
 
 ```powershell
+node .\bridge.mjs doctor
 node .\bridge.mjs status
 node .\bridge.mjs state
 node .\bridge.mjs config show
@@ -30,9 +31,11 @@ node .\bridge.mjs optimize-check --skip-canary
 node .\bridge.mjs optimize-check --yes --session mvs_<id>
 node .\bridge.mjs optimize-check --yes --long-prompt .\stable-prefix.txt
 node .\bridge.mjs ask --yes --mode review-only --task .\task.md
+node .\bridge.mjs ask --yes --mode review-only --task .\task.md --include .\src
 node .\bridge.mjs ask --dry-run --raw --task .\task.md
 node .\bridge.mjs duet init --goal .\duet-goal.local.md
 node .\bridge.mjs duet show
+node .\bridge.mjs duet transcript export
 npm run test:release
 ```
 
@@ -53,6 +56,9 @@ node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repe
 
 Safety notes:
 
+- Run workspace-sensitive commands from the bridge root. `doctor` reports the
+  expected root and catches wrong-shell context before `duet`, `ask`,
+  `mvs-send --task`, or `--long-prompt` inputs run.
 - `ask`, `canary`, `mvs-send`, and full `optimize-check` require `--yes`
   because they start a model turn.
 - Prefer `mvs-send --task`; inline `--content` also requires

@@ -16,6 +16,10 @@ const duetJournalPath = path.join(bridgeDir, "duet-journal.md");
 const duetLockPath = path.join(bridgeDir, "duet.lock");
 const duetLockStaleMs = 10 * 60 * 1000;
 const duetMaxEntryChars = 20000;
+const packageName = "mavis-minimax-bridge";
+const sourceIncludeMaxFiles = 80;
+const sourceIncludeMaxDirs = 160;
+let configLoadError = null;
 
 function defaultConfig() {
   return {
@@ -65,7 +69,16 @@ function normalizeConfig(input) {
   return merged;
 }
 
-const config = normalizeConfig(readJson(configPath, {}));
+function loadInitialConfig() {
+  try {
+    return normalizeConfig(readJson(configPath, {}));
+  } catch (error) {
+    configLoadError = error;
+    return normalizeConfig({});
+  }
+}
+
+const config = loadInitialConfig();
 
 function stableStringify(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -104,6 +117,7 @@ function printJson(value) {
 
 function usage() {
   console.log(`Usage:
+  node .\\bridge.mjs doctor
   node .\\bridge.mjs status
   node .\\bridge.mjs state
   node .\\bridge.mjs config show
@@ -117,7 +131,7 @@ function usage() {
   node .\\bridge.mjs canary-estimate [--long-prompt <file>] [--repeat-long <n>]
   node .\\bridge.mjs canary --yes [--port <port>]
   node .\\bridge.mjs optimize-check [--yes] [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
-  node .\\bridge.mjs ask --yes --mode review-only --task <file> [--task <followup-file> ...] [--source-context auto|off] [--dry-run] [--port <port>]
+  node .\\bridge.mjs ask --yes --mode review-only --task <file> [--task <followup-file> ...] [--include <path> ...] [--source-context auto|off] [--dry-run] [--port <port>]
   node .\\bridge.mjs mvs-status [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-peers [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
@@ -125,10 +139,163 @@ function usage() {
   node .\\bridge.mjs mvs-send --content <text> --allow-inline-content --yes [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
+  node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
   node .\\bridge.mjs duet note --agent codex|minimax --note <file> [--raw]
   node .\\bridge.mjs tail [--lines <n>] [--raw]
   node .\\bridge.mjs stop`);
+}
+
+class WorkspaceGuardError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "WorkspaceGuardError";
+    this.skipLedger = true;
+    this.details = details;
+  }
+}
+
+function realpathOrResolve(inputPath) {
+  const resolved = path.resolve(inputPath);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch (_) {
+    return resolved;
+  }
+}
+
+function comparablePath(inputPath) {
+  const normalized = path.normalize(realpathOrResolve(inputPath));
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function pathsEqual(left, right) {
+  return comparablePath(left) === comparablePath(right);
+}
+
+function gitRootInfo(cwd) {
+  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    return {
+      available: false,
+      cwd,
+      root: null,
+      matchesExpectedRoot: false,
+      error: String(result.stderr || result.stdout || "").trim() || "git root not available",
+    };
+  }
+  const root = realpathOrResolve(String(result.stdout || "").trim());
+  return {
+    available: true,
+    cwd,
+    root,
+    matchesExpectedRoot: pathsEqual(root, bridgeDir),
+  };
+}
+
+function sentinelInfo(relativePath, options = {}) {
+  const fullPath = path.join(bridgeDir, relativePath);
+  const exists = fs.existsSync(fullPath);
+  const info = {
+    path: fullPath,
+    relativePath,
+    exists,
+    required: Boolean(options.required),
+  };
+  if (exists && options.packageName) {
+    const data = readJson(fullPath, null);
+    info.packageName = data?.name || null;
+    info.matchesPackageName = info.packageName === options.packageName;
+  }
+  return info;
+}
+
+function doctorReport() {
+  const expectedRepoRoot = realpathOrResolve(bridgeDir);
+  const currentCwd = realpathOrResolve(process.cwd());
+  const cwdMatchesExpectedRoot = pathsEqual(currentCwd, expectedRepoRoot);
+  const sentinels = [
+    sentinelInfo("bridge.mjs", { required: true }),
+    sentinelInfo("package.json", { packageName, required: false }),
+    sentinelInfo(path.join("docs", "COMMANDS.md"), { required: false }),
+    sentinelInfo(path.join("examples", "duet-tetris-browser"), { required: false }),
+  ];
+  const missingRequiredSentinels = sentinels.filter((item) => item.required && !item.exists);
+  const missingOptionalSentinels = sentinels.filter((item) => !item.required && !item.exists);
+  const packageSentinel = sentinels.find((item) => item.relativePath === "package.json");
+  const packageNameMismatch = Boolean(packageSentinel?.exists && packageSentinel.matchesPackageName === false);
+  const git = {
+    bridgeDir: gitRootInfo(bridgeDir),
+    currentCwd: gitRootInfo(process.cwd()),
+  };
+
+  const warnings = [];
+  if (!cwdMatchesExpectedRoot) warnings.push("current working directory is not the bridge root");
+  if (missingOptionalSentinels.length > 0) {
+    warnings.push(`optional sentinels missing: ${missingOptionalSentinels.map((item) => item.relativePath).join(", ")}`);
+  }
+  if (packageNameMismatch) warnings.push(`package.json name is not ${packageName}`);
+  if (configLoadError) warnings.push(`config load failed: ${configLoadError.message}`);
+  if (git.bridgeDir.available && !git.bridgeDir.matchesExpectedRoot) {
+    warnings.push("bridge directory git root does not match bridge root");
+  }
+
+  const verdict = !cwdMatchesExpectedRoot || missingRequiredSentinels.length > 0 || packageNameMismatch || configLoadError
+    ? "fail"
+    : warnings.length > 0
+      ? "warn"
+      : "ok";
+  const nextCommand = cwdMatchesExpectedRoot
+    ? "Run the requested bridge command from this directory."
+    : `Set-Location -LiteralPath ${JSON.stringify(expectedRepoRoot)}`;
+
+  return {
+    event: "doctor",
+    expectedRepoRoot,
+    currentCwd,
+    cwdMatchesExpectedRoot,
+    sentinels,
+    git,
+    config: {
+      path: configPath,
+      loaded: !configLoadError,
+      error: configLoadError ? configLoadError.message : null,
+    },
+    warnings,
+    verdict,
+    nextCommand,
+  };
+}
+
+function doctorCommand() {
+  printJson(doctorReport());
+}
+
+function isHelpArgs(args) {
+  const [subcommand] = args;
+  return !subcommand || subcommand === "help" || subcommand === "--help";
+}
+
+function commandRequiresWorkspaceRoot(command, args) {
+  if (command === "duet") return !isHelpArgs(args);
+  if (command === "ask") return true;
+  if (command === "mvs-send") return args.includes("--task");
+  if (["canary", "canary-estimate", "optimize-check"].includes(command)) return args.includes("--long-prompt");
+  return false;
+}
+
+function ensureWorkspaceRoot(command, args) {
+  if (!commandRequiresWorkspaceRoot(command, args)) return;
+  if (pathsEqual(process.cwd(), bridgeDir)) return;
+  const report = doctorReport();
+  throw new WorkspaceGuardError(
+    `workspace guard blocked ${command}: run from bridge root ${report.expectedRepoRoot}`,
+    report,
+  );
 }
 
 function argValue(args, name, fallback = null) {
@@ -378,10 +545,193 @@ function readUntrackedSnippet(repoRoot, relativePath, perFileLimit) {
   return `### ${relativePath}\n\n\`\`\`\n${body}\n\`\`\``;
 }
 
+function isPathInsideRoot(rootPath, candidatePath) {
+  const root = comparablePath(rootPath);
+  const candidate = comparablePath(candidatePath);
+  const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  return candidate === root || candidate.startsWith(rootWithSep);
+}
+
+function relativeBridgePath(filePath) {
+  return path.relative(bridgeDir, filePath).replace(/\\/g, "/");
+}
+
+function shouldSkipSourceContextPath(relativePath, taskPathSet = new Set()) {
+  const normalized = relativePath.replace(/\\/g, "/");
+  const lower = normalized.toLowerCase();
+  const base = path.posix.basename(lower);
+  if (!normalized || normalized.startsWith("../") || path.isAbsolute(normalized)) return true;
+  if (taskPathSet.has(comparablePath(path.join(bridgeDir, normalized)))) return true;
+  if (lower === ".git" || lower.startsWith(".git/")) return true;
+  if (lower === "node_modules" || lower.startsWith("node_modules/")) return true;
+  if (lower.startsWith("live-smoke-")) return true;
+  if (base === ".env" || lower.endsWith("/.env")) return true;
+  if (lower.endsWith(".local.md") || lower.includes(".local.")) return true;
+  if ([
+    "config.json",
+    "ledger.jsonl",
+    "inbox.jsonl",
+    "outbox.jsonl",
+    "duet-state.json",
+    "duet-journal.md",
+    "duet.lock",
+  ].includes(base)) return true;
+  if (/^duet-(state|journal)\.json\..*\.tmp$/i.test(base)) return true;
+  if (lower === "examples/duet-simple-orders/answer.json") return true;
+  if ([
+    "examples/duet-tetris-browser/index.html",
+    "examples/duet-tetris-browser/styles.css",
+    "examples/duet-tetris-browser/game.js",
+  ].includes(lower)) return true;
+  return false;
+}
+
+function readSourceSnippet(fullPath, displayPath, perFileLimit) {
+  if (!fs.existsSync(fullPath)) {
+    return { text: `### ${displayPath}\n\n[skipped: not found]`, included: false, skipped: true };
+  }
+  const stats = fs.statSync(fullPath);
+  if (!stats.isFile()) {
+    return { text: `### ${displayPath}\n\n[skipped: not a regular file]`, included: false, skipped: true };
+  }
+
+  const maxBytes = Math.max(4096, perFileLimit * 4);
+  const bytesToRead = Math.min(stats.size, maxBytes);
+  const buffer = Buffer.allocUnsafe(bytesToRead);
+  let bytesRead = 0;
+  const fd = fs.openSync(fullPath, "r");
+  try {
+    bytesRead = fs.readSync(fd, buffer, 0, bytesToRead, 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const prefix = buffer.subarray(0, bytesRead);
+  if (!isProbablyText(prefix)) {
+    return {
+      text: `### ${displayPath}\n\n[skipped: binary-looking file, ${stats.size} bytes]`,
+      included: false,
+      skipped: true,
+    };
+  }
+  const text = prefix.toString("utf8");
+  const truncated = stats.size > bytesRead || text.length > perFileLimit;
+  const body = truncated ? `${text.slice(0, perFileLimit)}\n\n[truncated: file is ${stats.size} bytes]` : text;
+  return {
+    text: `### ${displayPath}\n\n\`\`\`\n${body}\n\`\`\``,
+    included: true,
+    skipped: false,
+  };
+}
+
+function includedSourceFiles(includePaths, taskPaths = []) {
+  const taskPathSet = new Set(taskPaths.map((taskPath) => comparablePath(taskPath)));
+  const files = [];
+  const skipped = [];
+  const seen = new Set();
+  const visitedDirectories = new Set();
+  let fileLimitReached = false;
+  let dirLimitReached = false;
+
+  const addFile = (realPath) => {
+    const relative = relativeBridgePath(realPath);
+    if (shouldSkipSourceContextPath(relative, taskPathSet)) {
+      skipped.push({ path: relative, reason: "excluded" });
+      return;
+    }
+    const key = comparablePath(realPath);
+    if (seen.has(key)) return;
+    if (files.length >= sourceIncludeMaxFiles) {
+      fileLimitReached = true;
+      skipped.push({ path: relative, reason: `file limit reached (${sourceIncludeMaxFiles})` });
+      return;
+    }
+    seen.add(key);
+    files.push({ path: realPath, relativePath: relative });
+  };
+
+  const visit = (realPath) => {
+    if (fileLimitReached || dirLimitReached) return;
+    if (!isPathInsideRoot(bridgeDir, realPath)) {
+      throw new Error(`--include path escapes bridge root: ${realPath}`);
+    }
+    const stats = fs.statSync(realPath);
+    if (stats.isFile()) {
+      addFile(realPath);
+      return;
+    }
+    if (!stats.isDirectory()) {
+      skipped.push({ path: relativeBridgePath(realPath), reason: "not a regular file" });
+      return;
+    }
+    const dirKey = comparablePath(realPath);
+    if (visitedDirectories.has(dirKey)) {
+      skipped.push({ path: relativeBridgePath(realPath), reason: "already visited" });
+      return;
+    }
+    if (visitedDirectories.size >= sourceIncludeMaxDirs) {
+      dirLimitReached = true;
+      skipped.push({ path: relativeBridgePath(realPath), reason: `directory limit reached (${sourceIncludeMaxDirs})` });
+      return;
+    }
+    visitedDirectories.add(dirKey);
+    const entries = fs.readdirSync(realPath, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name, "en"));
+    for (const entry of entries) {
+      if (fileLimitReached || dirLimitReached) break;
+      const child = path.join(realPath, entry.name);
+      const childRelative = relativeBridgePath(child);
+      if (shouldSkipSourceContextPath(childRelative, taskPathSet)) {
+        skipped.push({ path: childRelative, reason: "excluded" });
+        continue;
+      }
+      const childReal = realpathOrResolve(child);
+      if (!isPathInsideRoot(bridgeDir, childReal)) {
+        throw new Error(`--include path escapes bridge root: ${child}`);
+      }
+      const childStats = fs.statSync(childReal);
+      if (childStats.isDirectory()) {
+        visit(childReal);
+      } else if (childStats.isFile()) {
+        addFile(childReal);
+      } else {
+        skipped.push({ path: childRelative, reason: "not a regular file" });
+      }
+    }
+  };
+
+  for (const includePath of includePaths) {
+    const requested = path.resolve(process.cwd(), includePath);
+    if (!fs.existsSync(requested)) {
+      throw new Error(`--include path not found: ${requested}`);
+    }
+    const realPath = realpathOrResolve(requested);
+    if (!isPathInsideRoot(bridgeDir, realPath)) {
+      throw new Error(`--include path escapes bridge root: ${requested}`);
+    }
+    visit(realPath);
+  }
+
+  files.sort((left, right) => left.relativePath.localeCompare(right.relativePath, "en"));
+  return {
+    files,
+    skipped,
+    limits: {
+      maxFiles: sourceIncludeMaxFiles,
+      maxDirs: sourceIncludeMaxDirs,
+      fileLimitReached,
+      dirLimitReached,
+    },
+  };
+}
+
 function buildAskSourceContext(args, taskPaths = []) {
   const mode = argValue(args, "--source-context", config.askSourceContextMode || "auto");
   if (!["auto", "off"].includes(mode)) {
     throw new Error("--source-context must be auto or off");
+  }
+  const includePaths = argValues(args, "--include");
+  if (mode === "off" && includePaths.length > 0) {
+    throw new Error("--include cannot be used with --source-context off");
   }
   const maxChars = Number(argValue(args, "--source-context-chars", String(config.askMaxSourceContextChars ?? 24000)));
   if (!Number.isFinite(maxChars) || maxChars < 0 || maxChars > 200000) {
@@ -391,22 +741,35 @@ function buildAskSourceContext(args, taskPaths = []) {
     return { mode, included: false, reason: mode === "off" ? "disabled" : "zero budget", chars: 0, truncated: false, text: "" };
   }
 
+  const includeResult = includePaths.length > 0
+    ? includedSourceFiles(includePaths, taskPaths)
+    : {
+        files: [],
+        skipped: [],
+        limits: {
+          maxFiles: sourceIncludeMaxFiles,
+          maxDirs: sourceIncludeMaxDirs,
+          fileLimitReached: false,
+          dirLimitReached: false,
+        },
+      };
   const rootResult = runGit(["rev-parse", "--show-toplevel"]);
-  if (rootResult.status !== 0) {
-    return { mode, included: false, reason: "not a git repository", chars: 0, truncated: false, text: "" };
-  }
-  const repoRoot = path.resolve(String(rootResult.stdout || "").trim());
-  const statusResult = runGit(["status", "--porcelain=v1", "--untracked-files=all"], repoRoot);
-  const statusText = safeGitText(statusResult);
-  if (statusResult.status !== 0 || !statusText.trim()) {
+  const hasGitRoot = rootResult.status === 0;
+  const repoRoot = hasGitRoot ? path.resolve(String(rootResult.stdout || "").trim()) : null;
+  const statusResult = hasGitRoot ? runGit(["status", "--porcelain=v1", "--untracked-files=all"], repoRoot) : null;
+  const statusText = statusResult ? safeGitText(statusResult) : "";
+  const hasDirtyWorktree = Boolean(statusResult && statusResult.status === 0 && statusText.trim());
+  if (!hasDirtyWorktree && includeResult.files.length === 0 && includeResult.skipped.length === 0) {
     return {
       mode,
       included: false,
-      reason: statusResult.status !== 0 ? "git status failed" : "clean worktree",
+      reason: !hasGitRoot ? "not a git repository" : statusResult.status !== 0 ? "git status failed" : "clean worktree",
       chars: 0,
       truncated: false,
       text: "",
       repoRoot,
+      includeCount: 0,
+      includeSkippedCount: 0,
     };
   }
 
@@ -417,31 +780,64 @@ function buildAskSourceContext(args, taskPaths = []) {
   const wrapperReserve = 120;
   const budget = { remaining: Math.max(0, maxChars - parts.join("\n").length - wrapperReserve), truncated: false };
 
-  appendBounded(parts, "git status --short", statusText, budget);
-  appendBounded(parts, "git diff --stat", safeGitText(runGit(["diff", "--stat"], repoRoot)), budget);
+  if (hasDirtyWorktree) {
+    appendBounded(parts, "git status --short", statusText, budget);
+    appendBounded(parts, "git diff --stat", safeGitText(runGit(["diff", "--stat"], repoRoot)), budget);
+  }
 
-  const excluded = new Set(taskPaths.map((taskPath) => path.resolve(taskPath).toLowerCase()));
-  const untracked = listUntrackedPaths(repoRoot)
-    .filter((relativePath) => !excluded.has(path.resolve(repoRoot, relativePath).toLowerCase()));
-  if (untracked.length > 0) {
+  const excluded = new Set(taskPaths.map((taskPath) => comparablePath(taskPath)));
+  const untracked = hasDirtyWorktree ? listUntrackedPaths(repoRoot)
+    .filter((relativePath) => !excluded.has(comparablePath(path.resolve(repoRoot, relativePath)))) : [];
+  if (hasDirtyWorktree && untracked.length > 0) {
     const perFileLimit = Math.max(1200, Math.min(6000, Math.floor(maxChars / Math.max(2, untracked.length))));
     const snippets = untracked.map((relativePath) => readUntrackedSnippet(repoRoot, relativePath, perFileLimit)).join("\n\n");
     appendBounded(parts, "untracked text file snippets", snippets, budget);
   }
 
-  appendBounded(parts, "git diff --cached", safeGitText(runGit(["diff", "--cached", "--no-ext-diff", "--"], repoRoot)), budget);
-  appendBounded(parts, "git diff", safeGitText(runGit(["diff", "--no-ext-diff", "--"], repoRoot)), budget);
+  if (includeResult.files.length > 0) {
+    const perFileLimit = Math.max(1200, Math.min(6000, Math.floor(maxChars / Math.max(2, includeResult.files.length))));
+    const snippets = includeResult.files.map((file) => readSourceSnippet(file.path, file.relativePath, perFileLimit));
+    const includedCount = snippets.filter((snippet) => snippet.included).length;
+    const binarySkippedCount = snippets.filter((snippet) => snippet.skipped).length;
+    appendBounded(parts, "explicit include text file snippets", snippets.map((snippet) => snippet.text).join("\n\n"), budget);
+    includeResult.includedCount = includedCount;
+    includeResult.binarySkippedCount = binarySkippedCount;
+  } else {
+    includeResult.includedCount = 0;
+    includeResult.binarySkippedCount = 0;
+  }
+
+  if (includeResult.skipped.length > 0) {
+    const skippedText = includeResult.skipped
+      .map((item) => `- ${item.path}: ${item.reason}`)
+      .join("\n");
+    appendBounded(parts, "explicit include skipped paths", skippedText, budget);
+  }
+
+  if (hasDirtyWorktree) {
+    appendBounded(parts, "git diff --cached", safeGitText(runGit(["diff", "--cached", "--no-ext-diff", "--"], repoRoot)), budget);
+    appendBounded(parts, "git diff", safeGitText(runGit(["diff", "--no-ext-diff", "--"], repoRoot)), budget);
+  }
 
   const text = `<source_context mode="${mode}" chars="${maxChars}" truncated="${budget.truncated}">\n${parts.join("\n")}\n</source_context>`;
+  const reason = hasDirtyWorktree && includePaths.length > 0
+    ? "dirty worktree and explicit include"
+    : hasDirtyWorktree
+      ? "dirty worktree"
+      : "explicit include";
   return {
     mode,
     included: true,
-    reason: "dirty worktree",
+    reason,
     repoRoot,
     chars: text.length,
     maxChars,
     truncated: budget.truncated,
     untrackedCount: untracked.length,
+    includeCount: includeResult.includedCount || 0,
+    includeSkippedCount: (includeResult.skipped.length || 0) + (includeResult.binarySkippedCount || 0),
+    includePaths: includePaths.map((includePath) => path.resolve(process.cwd(), includePath)),
+    includeLimits: includeResult.limits,
     text,
   };
 }
@@ -1619,6 +2015,10 @@ async function askCommand(args) {
     maxChars: sourceContext.maxChars || null,
     truncated: sourceContext.truncated,
     untrackedCount: sourceContext.untrackedCount || 0,
+    includeCount: sourceContext.includeCount || 0,
+    includeSkippedCount: sourceContext.includeSkippedCount || 0,
+    includePaths: sourceContext.includePaths || [],
+    includeLimits: sourceContext.includeLimits || null,
     repoRoot: sourceContext.repoRoot || null,
   };
   if (dryRun) {
@@ -1942,6 +2342,118 @@ function publicDuetState(state) {
   };
 }
 
+function tailLines(text, count) {
+  const lines = text ? text.split(/\r?\n/) : [];
+  return lines.slice(-count).join("\n");
+}
+
+function requireSafeRawOutputPath(outPath) {
+  const base = path.basename(outPath).toLowerCase();
+  if (base.includes(".local.") || base.endsWith(".local.md") || base.endsWith(".local.json")) return;
+  throw new Error("--raw --out requires a .local.* output path");
+}
+
+function safeLedgerEvent(event) {
+  return {
+    ts: event.ts || null,
+    event: event.event || null,
+    id: event.id || null,
+    mode: event.mode || null,
+    status: event.status || null,
+    baton: event.baton || null,
+    from: event.from || null,
+    to: event.to || null,
+    sessionID: event.sessionID || null,
+    turnsRequested: event.turnsRequested || null,
+    chars: event.chars || null,
+    sourceContext: event.sourceContext || null,
+    verdict: event.verdict || null,
+  };
+}
+
+function duetTranscriptExport(args) {
+  const format = argValue(args, "--format", "json");
+  if (!["json", "markdown"].includes(format)) {
+    throw new Error("--format must be json or markdown");
+  }
+  const raw = args.includes("--raw");
+  const outPathArg = argValue(args, "--out", null);
+  const journalLines = positiveIntegerArg(args, "--journal-lines", "80");
+  const ledgerLines = positiveIntegerArg(args, "--ledger-lines", "50");
+  if (raw && outPathArg) requireSafeRawOutputPath(path.resolve(process.cwd(), outPathArg));
+
+  const state = readDuetState();
+  const journal = readDuetJournal();
+  const ledgerEvents = args.includes("--include-ledger") ? readJsonl(ledgerPath, ledgerLines).map(safeLedgerEvent) : [];
+  const payload = {
+    event: "duet-transcript-export",
+    generatedAt: now(),
+    raw,
+    format,
+    statePath: duetStatePath,
+    journalPath: duetJournalPath,
+    ledgerPath: args.includes("--include-ledger") ? ledgerPath : null,
+    state: raw ? state : publicDuetState(state),
+    journal: raw
+      ? { ...textSummary(journal), text: journal }
+      : { ...textSummary(journal), tail: textSummary(tailLines(journal, journalLines)), tailLines: journalLines },
+    ledger: args.includes("--include-ledger") ? {
+      lines: ledgerLines,
+      events: raw ? ledgerEvents : ledgerEvents.map((event) => ({ ...event, sourceContext: event.sourceContext ? { ...event.sourceContext, text: undefined } : null })),
+    } : null,
+  };
+
+  const rendered = format === "json" ? stableStringify(payload) : renderDuetTranscriptMarkdown(payload);
+  if (outPathArg) {
+    const outPath = path.resolve(process.cwd(), outPathArg);
+    fs.writeFileSync(outPath, rendered, "utf8");
+    return printJson({
+      event: "duet-transcript-export",
+      raw,
+      format,
+      outPath,
+      chars: rendered.length,
+      sha256: textDigest(rendered),
+    });
+  }
+  process.stdout.write(config.asciiConsole === false ? rendered : escapeNonAscii(rendered));
+}
+
+function renderDuetTranscriptMarkdown(payload) {
+  const lines = [
+    "# Duet Transcript Export",
+    "",
+    `Generated: ${payload.generatedAt}`,
+    `Raw: ${payload.raw}`,
+    `Status: ${payload.state.status}`,
+    `Baton: ${payload.state.baton ?? "none"}`,
+    `Iteration: ${payload.state.iteration}/${payload.state.maxIterations}`,
+    "",
+    "## State",
+    "",
+    "```json",
+    JSON.stringify(payload.state, null, 2),
+    "```",
+    "",
+    "## Journal",
+    "",
+  ];
+  if (payload.raw) {
+    lines.push(payload.journal.text);
+  } else {
+    lines.push(`Chars: ${payload.journal.chars}`);
+    lines.push(`Lines: ${payload.journal.lines}`);
+    lines.push(`SHA-256: ${payload.journal.sha256}`);
+    lines.push(`Tail lines summarized: ${payload.journal.tailLines}`);
+    lines.push(`Tail SHA-256: ${payload.journal.tail.sha256}`);
+  }
+  if (payload.ledger) {
+    lines.push("", "## Ledger", "", "```json", JSON.stringify(payload.ledger.events, null, 2), "```");
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
 function printDuetEvent(event, state, args, extra = {}) {
   const raw = args.includes("--raw");
   printJson({
@@ -2100,12 +2612,18 @@ function duetCommand(args) {
     console.log(`Usage:
   node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
+  node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
   node .\\bridge.mjs duet note --agent codex|minimax --note <file> [--raw]`);
     return;
   }
   if (subcommand === "init") return withDuetLock(() => duetInitCommand(rest));
   if (subcommand === "show") return duetShowCommand(rest);
+  if (subcommand === "transcript") {
+    const [action, ...actionRest] = rest;
+    if (action === "export") return duetTranscriptExport(actionRest);
+    throw new Error("unknown duet transcript command; expected `duet transcript export`");
+  }
   if (subcommand === "pass") return withDuetLock(() => duetPassCommand(rest));
   if (subcommand === "note") return withDuetLock(() => duetNoteCommand(rest));
   throw new Error(`unknown duet command: ${subcommand}`);
@@ -2119,6 +2637,8 @@ async function main() {
   const [command, ...args] = process.argv.slice(2);
   try {
     if (!command || command === "help" || command === "--help") return usage();
+    if (command === "doctor") return doctorCommand();
+    ensureWorkspaceRoot(command, args);
     if (command === "status") return await statusCommand();
     if (command === "state") return await stateCommand();
     if (command === "config") return configCommand(args);
@@ -2140,8 +2660,13 @@ async function main() {
     if (command === "stop") return await stopCommand();
     throw new Error(`unknown command: ${command}`);
   } catch (error) {
-    appendJsonl(ledgerPath, { event: "error", command, message: error.message });
+    if (!error.skipLedger) {
+      appendJsonl(ledgerPath, { event: "error", command, message: error.message });
+    }
     console.error(`[bridge] ${error.message}`);
+    if (error.details && args.includes("--json")) {
+      printJson({ event: "workspace-guard", ...error.details });
+    }
     process.exitCode = 1;
   }
 }

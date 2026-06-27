@@ -33,6 +33,7 @@ npm run init
 npm run install:skill
 npm run install:codex-skill
 npm run install:codex-slash
+node .\bridge.mjs doctor
 node .\bridge.mjs status
 ```
 
@@ -70,6 +71,7 @@ git clone https://github.com/AndrewMoryakov/mavis-minimax-bridge.git
 cd mavis-minimax-bridge
 npm run init
 node --check .\bridge.mjs
+node .\bridge.mjs doctor
 node .\bridge.mjs status
 npm run install:skill
 npm run install:codex-skill
@@ -88,6 +90,7 @@ Verify without spending model tokens:
 
 ```powershell
 node .\bridge.mjs status
+node .\bridge.mjs doctor
 node .\bridge.mjs state
 node .\bridge.mjs mode list
 node .\bridge.mjs token-stats --ledger
@@ -172,6 +175,7 @@ Use for collaboration:
 
 ```powershell
 node .\bridge.mjs ask --yes --mode review-only --task .\task.md
+node .\bridge.mjs ask --yes --mode review-only --task .\task.md --include .\src
 node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 node .\bridge.mjs ask --dry-run --raw --task .\task.md
 node .\bridge.mjs mvs-send --session mvs_<id> --task .\task.md --yes
@@ -184,7 +188,9 @@ questions to discover problems.
 By default, `ask` attaches a bounded source context from the local Git worktree:
 `git status`, staged/unstaged diff, and text snippets for untracked files. This
 helps MiniMax review local changes it cannot otherwise see. Use
-`--source-context off` for prompts that must not include local source, or
+repeatable `--include <path>` to attach explicit files or directories even when
+the worktree is clean. Use `--source-context off` for prompts that must not
+include local source; it cannot be combined with `--include`. Use
 `--dry-run --raw` to inspect the assembled prompt without spending tokens.
 
 For longer Codex and MiniMax collaboration, keep orchestration thin. The minimal
@@ -238,6 +244,16 @@ only when you intentionally need the full local relay text:
 node .\bridge.mjs duet show --raw
 ```
 
+Export a redacted transcript for review:
+
+```powershell
+node .\bridge.mjs duet transcript export
+node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcript.local.md
+```
+
+Raw transcript exports require explicit `--raw`; raw file output must use a
+`.local.*` path.
+
 Pass the baton:
 
 ```powershell
@@ -287,6 +303,7 @@ Rules for agents:
 
 ```powershell
 node .\bridge.mjs status
+node .\bridge.mjs doctor
 node .\bridge.mjs state
 node .\bridge.mjs config show
 node .\bridge.mjs mode list
@@ -307,6 +324,7 @@ node .\bridge.mjs optimize-check --yes
 node .\bridge.mjs optimize-check --yes --session mvs_<id>
 node .\bridge.mjs optimize-check --yes --long-prompt path\to\stable-prefix.txt
 node .\bridge.mjs ask --yes --mode review-only --task path\to\task.md
+node .\bridge.mjs ask --yes --mode review-only --task path\to\task.md --include path\to\source
 node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 node .\bridge.mjs ask --dry-run --raw --task path\to\task.md
 node .\bridge.mjs mvs-status --session mvs_<id>
@@ -315,6 +333,7 @@ node .\bridge.mjs mvs-messages --session mvs_<id> --limit 5
 node .\bridge.mjs mvs-send --session mvs_<id> --task path\to\task.md --yes
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
+node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md
 node .\bridge.mjs duet note --agent codex --note .\note.local.md
 node .\bridge.mjs tail
@@ -452,6 +471,8 @@ node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repe
 
 ## Documentation Map
 
+- [docs/AGENT_IMPLEMENTATION_PLAN.md](docs/AGENT_IMPLEMENTATION_PLAN.md):
+  phased agent-driven plan for the next bridge improvements.
 - [docs/COMMANDS.md](docs/COMMANDS.md): full CLI command reference.
 - [docs/DUET_RELAY.md](docs/DUET_RELAY.md): minimal baton-passing protocol for
   Codex and MiniMax.

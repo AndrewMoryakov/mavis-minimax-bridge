@@ -5,8 +5,8 @@ description: >-
   types /bridge or asks to connect Codex and MiniMax, inspect bridge state,
   audit token optimization, set a Mavis session, change bridge modes, or run a
   safe collaboration review, including Duet Relay baton-passing. Commands: /bridge status, /bridge audit,
-  /bridge session, /bridge mode, /bridge estimate, /bridge ask, /bridge send,
-  /bridge duet, /bridge help.
+  /bridge doctor, /bridge session, /bridge mode, /bridge estimate, /bridge ask,
+  /bridge send, /bridge duet, /bridge help.
 ---
 
 # Bridge Control
@@ -20,7 +20,7 @@ Always run commands from that directory.
 
 ## Safety
 
-- `status`, `state`, `audit`, `token-stats`, `session show`, `mode list`, and
+- `doctor`, `status`, `state`, `audit`, `token-stats`, `session show`, `mode list`, and
   `canary-estimate` are local-only and do not intentionally start a model turn.
 - `duet init`, `duet show`, `duet pass`, and `duet note` are local-only
   coordination commands. They do not call MiniMax.
@@ -30,6 +30,7 @@ Always run commands from that directory.
 - Prefer `ask --mode review-only` before any patch proposal.
 - `ask` automatically attaches bounded local Git source context for dirty
   worktrees. Use `--source-context off` only when local source must not be sent,
+  repeatable `--include <path>` to attach explicit source from a clean worktree,
   and `--dry-run --raw` to inspect the assembled prompt without spending tokens.
 - Keep prompts compact. For multi-turn bridge review, use a small task file
   plus 2-3 focused follow-up task files.
@@ -45,6 +46,7 @@ Parse `/bridge <subcommand>` and run the matching recipe.
 Print a short command list:
 
 ```powershell
+node .\bridge.mjs doctor
 node .\bridge.mjs status
 node .\bridge.mjs state
 node .\bridge.mjs audit
@@ -53,7 +55,19 @@ node .\bridge.mjs mode list
 node .\bridge.mjs session show
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs duet show
+node .\bridge.mjs duet transcript export
 ```
+
+### `/bridge doctor`
+
+Run:
+
+```powershell
+node .\bridge.mjs doctor
+```
+
+Report the expected bridge root, current working directory, sentinel files, Git
+root diagnostics, and the next command to fix a wrong shell context.
 
 ### `/bridge status`
 
@@ -141,6 +155,18 @@ Summarize the current relay without printing local goal, handoff, or journal
 text. Use `--raw` only when the user explicitly asks for the full local relay
 content.
 
+### `/bridge duet transcript export`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet transcript export
+node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcript.local.md
+```
+
+Export a redacted transcript for review. Use `--raw` only when exact local goal,
+handoff, and journal text are intentionally needed.
+
 ### `/bridge duet init <goal-file>`
 
 Run:
@@ -204,6 +230,7 @@ If the user provides a task file, use:
 
 ```powershell
 node .\bridge.mjs ask --yes --mode review-only --task path\to\task.md
+node .\bridge.mjs ask --yes --mode review-only --task path\to\task.md --include path\to\source
 ```
 
 If the user provides the request as text, create a compact temporary task file

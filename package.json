@@ -23,6 +23,7 @@
     "prefix:build": "node ./scripts/build-stable-prefix.mjs",
     "status": "node ./bridge.mjs status",
     "state": "node ./bridge.mjs state",
+    "doctor": "node ./bridge.mjs doctor",
     "mode": "node ./bridge.mjs mode list",
     "tokens": "node ./bridge.mjs token-stats --ledger",
     "audit": "node ./bridge.mjs audit",

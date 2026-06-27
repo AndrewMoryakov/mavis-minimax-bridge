@@ -31,6 +31,8 @@ Covered areas:
 - Duet lifecycle: `init`, `show`, `pass`, `note`, `done`.
 - Redacted output by default and explicit `--raw` behavior.
 - Raw output behavior for mutating Duet commands.
+- Redacted and raw `duet transcript export`, including Markdown output and raw
+  output path protection.
 - `maxIterations` stop behavior.
 - Explicit `human_escalation`.
 - Wrong baton and invalid agent names.
@@ -39,8 +41,10 @@ Covered areas:
   `duet-journal.md`.
 - Fresh and stale `duet.lock` behavior.
 - Lock cleanup after failed mutating commands.
-- Safe local commands: `help`, `config show`, `mode list`, `session show`,
-  `deny-session list`, `token-stats --ledger`.
+- Safe local commands: `help`, `doctor`, `config show`, `mode list`,
+  `session show`, `deny-session list`, `token-stats --ledger`.
+- Workspace guard behavior for wrong-CWD `duet`, `ask`, and `--long-prompt`
+  file inputs, including no runtime-file writes on guard failure.
 - `ask --dry-run` source-context packaging for dirty Git worktrees.
 - `state` visibility for Duet runtime files.
 - `.gitignore` coverage for runtime files and duet atomic temp files.

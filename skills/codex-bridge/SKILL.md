@@ -21,7 +21,7 @@ Always run commands from the repository root.
 
 ## Safety
 
-- Local-only commands: `status`, `state`, `config show`, `mode list`,
+- Local-only commands: `doctor`, `status`, `state`, `config show`, `mode list`,
   `session show`, `deny-session list`, `token-stats --ledger`, `audit`,
   `canary-estimate`, `tail`, and `duet init/show/pass/note`.
 - Token-spending commands: `ask`, `mvs-send`, `canary`, and `optimize-check`
@@ -31,6 +31,7 @@ Always run commands from the repository root.
 - Prefer `ask --mode review-only` before any patch proposal.
 - `ask` automatically attaches bounded local Git source context for dirty
   worktrees. Use `--source-context off` only when local source must not be sent,
+  repeatable `--include <path>` to attach explicit source from a clean worktree,
   and `--dry-run --raw` to inspect the assembled prompt without spending tokens.
 - Keep task files compact and focused.
 - Duet commands redact relay text by default; use `--raw` only when the user
@@ -41,6 +42,7 @@ Always run commands from the repository root.
 Inspect live bridge and MiniMax routing:
 
 ```powershell
+node .\bridge.mjs doctor
 node .\bridge.mjs status
 node .\bridge.mjs state
 node .\bridge.mjs mode list
@@ -99,6 +101,7 @@ a model prompt:
 ```powershell
 node .\bridge.mjs duet init --goal path\to\goal.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
+node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet pass --from codex --to minimax --handoff path\to\handoff.md
 node .\bridge.mjs duet note --agent codex --note path\to\note.md
 ```
@@ -113,6 +116,11 @@ node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff p
 `duet-state.json`, `duet-journal.md`, `duet.lock`, and duet atomic temp files
 are local ignored runtime files. Keep handoffs compact; goal, handoff, and note
 files are limited to 20000 characters.
+
+Use `duet transcript export` for a redacted JSON transcript. Add
+`--format markdown --out .\duet-transcript.local.md` for a Markdown artifact.
+Use `--raw` only when local goal, handoff, and journal text are intentionally
+needed.
 
 ### Natural Language Start
 
@@ -148,6 +156,7 @@ Use a task file for review-only collaboration:
 
 ```powershell
 node .\bridge.mjs ask --yes --mode review-only --task path\to\task.md
+node .\bridge.mjs ask --yes --mode review-only --task path\to\task.md --include path\to\source
 ```
 
 By default, `ask` attaches `git status`, diffs, and text snippets for untracked

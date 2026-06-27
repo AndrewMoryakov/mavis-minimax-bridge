@@ -6,9 +6,11 @@ turn and should be run only after user approval.
 ## Status And State
 
 ```powershell
+node .\bridge.mjs doctor
 node .\bridge.mjs status
 node .\bridge.mjs state
 node .\bridge.mjs config show
+npm run doctor
 npm run check
 npm run test:offline
 npm run test:release
@@ -17,6 +19,8 @@ npm run install:codex-skill
 npm run install:codex-slash
 ```
 
+- `doctor`: verify that the current working directory is the bridge root before
+  running workspace-sensitive commands.
 - `status`: inspect live Desktop-owned `opencode serve` config.
 - `state`: inspect live server, runtime files, current modes, and recent ledger
   events.
@@ -243,6 +247,7 @@ These commands can spend tokens:
 
 ```powershell
 node .\bridge.mjs ask --yes --mode review-only --task .\task.md
+node .\bridge.mjs ask --yes --mode review-only --task .\task.md --include .\src
 node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 node .\bridge.mjs ask --yes --mode patch-proposal --task .\task.md
 node .\bridge.mjs ask --dry-run --raw --task .\task.md
@@ -257,8 +262,12 @@ ledger/outbox.
 `ask` automatically attaches a bounded local source context when the Git
 worktree is dirty. The context includes `git status`, diff output, and text
 snippets for untracked files so MiniMax can review changes that are not visible
-in its own session. Use `--source-context off` to disable this, or
-`--dry-run --raw` to inspect the assembled prompt without starting a model turn.
+in its own session. Use repeatable `--include <path>` to attach explicit files
+or directories from a clean worktree. Included paths must stay inside the bridge
+root; runtime files, task files, binary-looking files, and ignored local scratch
+files are skipped. Use `--source-context off` to disable source context; it
+cannot be combined with `--include`. Use `--dry-run --raw` to inspect the
+assembled prompt without starting a model turn.
 Prefer `mvs-send --task` over `--content`; inline content can be captured by
 shell history or process inspection.
 
@@ -269,6 +278,8 @@ These commands are local-only and do not call MiniMax:
 ```powershell
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
+node .\bridge.mjs duet transcript export
+node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcript.local.md
 node .\bridge.mjs duet note --agent codex --note .\note.local.md
 node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md
 node .\bridge.mjs duet pass --from minimax --status done --handoff .\handoff.local.md
@@ -278,6 +289,11 @@ node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff .
 `duet init` creates `duet-state.json` and `duet-journal.md` in the repository
 root. They are local runtime files and can contain goals, handoffs, local paths,
 and coordination history.
+
+Run workspace-sensitive bridge commands from the bridge repository root. The
+workspace guard blocks `duet`, `ask`, `mvs-send --task`, and `--long-prompt`
+canary inputs when the current working directory is not the bridge root. Use
+`node .\bridge.mjs doctor` if the active shell may be in another project.
 
 Mutating duet commands use a short-lived `duet.lock` file to avoid overlapping
 updates from two CLI processes. A lock older than ten minutes is treated as
@@ -290,6 +306,10 @@ relay stops with `human_escalation`.
 Duet command output is redacted by default: goal, handoff, escalation text, and
 journal content are summarized by size and SHA-256. Add `--raw` only when you
 intentionally need local relay text in stdout.
+
+Use `duet transcript export` to produce a redacted JSON or Markdown transcript
+for review. Add `--raw` only when local goal, handoff, and journal text are
+intentionally needed. Raw file exports require a `.local.*` output path.
 
 For the simplest user flow, describe the task to Codex or MiniMax and end with
 `let's go`. See [LETS_GO.md](LETS_GO.md).

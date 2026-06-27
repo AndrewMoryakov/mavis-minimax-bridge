@@ -40,6 +40,10 @@ runtime initializer. `duet.lock` is a short-lived guard file created while a
 duet command updates state. Atomic duet temp files may appear only if a process
 dies mid-write; they are ignored by git and can be deleted after inspection.
 
+Run `node .\bridge.mjs doctor` before workspace-sensitive commands if the shell
+may be in another project. `doctor` is local-only and does not write runtime
+files. Workspace guard failures also avoid runtime-file writes.
+
 ```powershell
 node .\bridge.mjs duet init --goal .\duet-goal.local.md
 ```

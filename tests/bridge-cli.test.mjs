@@ -34,8 +34,12 @@ function readJson(dir, name) {
 }
 
 function runBridge(dir, args) {
-  const result = spawnSync(process.execPath, ["bridge.mjs", ...args], {
-    cwd: dir,
+  return runBridgeScript(path.join(dir, "bridge.mjs"), dir, args);
+}
+
+function runBridgeScript(scriptPath, cwd, args) {
+  const result = spawnSync(process.execPath, [scriptPath, ...args], {
+    cwd,
     encoding: "utf8",
   });
   return {
@@ -116,6 +120,61 @@ test("raw mutating duet commands expose local text only when explicitly requeste
   const note = ok(runBridge(dir, ["duet", "note", "--agent", "minimax", "--note", "note.md", "--raw"]));
   assert.equal(note.raw, true);
   assert.match(JSON.stringify(note), new RegExp(secret));
+});
+
+test("duet transcript export redacts by default and raw export requires explicit raw", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_TRANSCRIPT_EXPORT_789";
+  writeFile(dir, "goal.md", `Goal ${secret}`);
+  writeFile(dir, "handoff.md", `Handoff ${secret}`);
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md"]));
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
+
+  const redacted = ok(runBridge(dir, ["duet", "transcript", "export"]));
+  assert.equal(redacted.event, "duet-transcript-export");
+  assert.equal(redacted.raw, false);
+  assert.doesNotMatch(JSON.stringify(redacted), new RegExp(secret));
+  assert.equal(typeof redacted.state.goal.sha256, "string");
+  assert.equal(typeof redacted.journal.sha256, "string");
+
+  const raw = ok(runBridge(dir, ["duet", "transcript", "export", "--raw"]));
+  assert.equal(raw.raw, true);
+  assert.match(JSON.stringify(raw), new RegExp(secret));
+});
+
+test("duet transcript export supports markdown output and protects raw output paths", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_TRANSCRIPT_MARKDOWN_101";
+  writeFile(dir, "goal.md", `Goal ${secret}`);
+  writeFile(dir, "handoff.md", `Handoff ${secret}`);
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md"]));
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--status", "done", "--handoff", "handoff.md"]));
+
+  const out = ok(runBridge(dir, [
+    "duet",
+    "transcript",
+    "export",
+    "--format",
+    "markdown",
+    "--out",
+    "transcript.local.md",
+  ]));
+  assert.equal(out.event, "duet-transcript-export");
+  assert.equal(out.format, "markdown");
+  const markdown = fs.readFileSync(path.join(dir, "transcript.local.md"), "utf8");
+  assert.match(markdown, /# Duet Transcript Export/);
+  assert.doesNotMatch(markdown, new RegExp(secret));
+
+  fails(
+    runBridge(dir, ["duet", "transcript", "export", "--raw", "--out", "transcript.md"]),
+    /--raw --out requires a \.local\.\* output path/,
+  );
+
+  const rawOut = ok(runBridge(dir, ["duet", "transcript", "export", "--raw", "--out", "transcript.local.json"]));
+  assert.equal(rawOut.raw, true);
+  assert.match(fs.readFileSync(path.join(dir, "transcript.local.json"), "utf8"), new RegExp(secret));
 });
 
 test("duet done state blocks further passes without --force", (t) => {
@@ -249,12 +308,69 @@ test("safe local commands work in an isolated runtime directory", (t) => {
   const dir = sandbox(t);
 
   assert.equal(runBridge(dir, ["help"]).status, 0);
+  assert.equal(ok(runBridge(dir, ["doctor"])).event, "doctor");
   assert.equal(runBridge(dir, ["duet", "help"]).status, 0);
   assert.equal(ok(runBridge(dir, ["config", "show"])).event, "config");
   assert.equal(ok(runBridge(dir, ["mode", "list"])).event, "mode");
   assert.equal(ok(runBridge(dir, ["session", "show"])).event, "session");
   assert.equal(ok(runBridge(dir, ["deny-session", "list"])).event, "deny-session");
   assert.equal(ok(runBridge(dir, ["token-stats", "--ledger", "--lines", "5"])).event, "token-stats");
+});
+
+test("doctor is local-only and warns when optional sentinels are absent", (t) => {
+  const dir = sandbox(t);
+
+  const report = ok(runBridge(dir, ["doctor"]));
+  assert.equal(report.event, "doctor");
+  assert.equal(report.cwdMatchesExpectedRoot, true);
+  assert.equal(report.verdict, "warn");
+  assert.equal(report.sentinels.find((item) => item.relativePath === "bridge.mjs").exists, true);
+  assert.equal(fs.existsSync(path.join(dir, "ledger.jsonl")), false);
+});
+
+test("doctor reports invalid config without crashing", (t) => {
+  const dir = sandbox(t);
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ maxTurns: 999 }), "utf8");
+
+  const report = ok(runBridge(dir, ["doctor"]));
+  assert.equal(report.event, "doctor");
+  assert.equal(report.config.loaded, false);
+  assert.equal(report.verdict, "fail");
+  assert.match(report.config.error, /maxTurns/);
+  assert.equal(fs.existsSync(path.join(dir, "ledger.jsonl")), false);
+});
+
+test("workspace guard blocks sensitive commands from the wrong cwd without writing runtime files", (t) => {
+  const dir = sandbox(t);
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-other-"));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  writeFile(dir, "goal.md", "Wrong cwd goal");
+  writeFile(dir, "task.md", "Wrong cwd task");
+  writeFile(dir, "long.txt", "Wrong cwd long prompt");
+
+  const script = path.join(dir, "bridge.mjs");
+  fails(runBridgeScript(script, other, ["duet", "init", "--goal", "goal.md"]), /workspace guard blocked duet/);
+  fails(runBridgeScript(script, other, ["ask", "--dry-run", "--task", "task.md"]), /workspace guard blocked ask/);
+  fails(runBridgeScript(script, other, ["canary-estimate", "--long-prompt", "long.txt"]), /workspace guard blocked canary-estimate/);
+
+  assert.equal(fs.existsSync(path.join(dir, "duet-state.json")), false);
+  assert.equal(fs.existsSync(path.join(dir, "inbox.jsonl")), false);
+  assert.equal(fs.existsSync(path.join(dir, "ledger.jsonl")), false);
+});
+
+test("workspace guard keeps help and doctor usable from the wrong cwd", (t) => {
+  const dir = sandbox(t);
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-other-"));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  const script = path.join(dir, "bridge.mjs");
+
+  assert.equal(runBridgeScript(script, other, ["duet", "help"]).status, 0);
+  const report = ok(runBridgeScript(script, other, ["doctor"]));
+  assert.equal(report.event, "doctor");
+  assert.equal(report.cwdMatchesExpectedRoot, false);
+  assert.equal(report.verdict, "fail");
+  assert.match(report.nextCommand, /Set-Location/);
+  assert.equal(fs.existsSync(path.join(dir, "ledger.jsonl")), false);
 });
 
 test("ask dry-run attaches dirty worktree source context by default", (t) => {
@@ -295,6 +411,150 @@ test("ask dry-run can disable source context", (t) => {
   assert.equal(dryRun.sourceContext.reason, "disabled");
   assert.doesNotMatch(dryRun.prompts[0].text, /<source_context/);
   assert.doesNotMatch(JSON.stringify(dryRun), /SHOULD_NOT_APPEAR/);
+});
+
+test("ask dry-run can include explicit source from a clean worktree", (t) => {
+  const dir = sandbox(t);
+  git(dir, ["init"]);
+  git(dir, ["config", "user.email", "test@example.invalid"]);
+  git(dir, ["config", "user.name", "Bridge Test"]);
+  fs.mkdirSync(path.join(dir, "src"));
+  writeFile(dir, "task.md", "Review explicit includes.");
+  writeFile(dir, "src/alpha.txt", "EXPLICIT_INCLUDE_ALPHA\n");
+  writeFile(dir, "src/beta.txt", "EXPLICIT_INCLUDE_BETA\n");
+  git(dir, ["add", "bridge.mjs", "task.md", "src/alpha.txt", "src/beta.txt"]);
+  git(dir, ["commit", "-m", "seed"]);
+
+  const dryRun = ok(runBridge(dir, [
+    "ask",
+    "--dry-run",
+    "--mode",
+    "review-only",
+    "--task",
+    "task.md",
+    "--include",
+    "src",
+    "--raw",
+  ]));
+  assert.equal(dryRun.sourceContext.included, true);
+  assert.equal(dryRun.sourceContext.reason, "explicit include");
+  assert.equal(dryRun.sourceContext.includeCount, 2);
+  assert.equal(dryRun.sourceContext.untrackedCount, 0);
+  assert.match(dryRun.sourceContext.text, /explicit include text file snippets/);
+  assert.match(dryRun.sourceContext.text, /EXPLICIT_INCLUDE_ALPHA/);
+  assert.match(dryRun.sourceContext.text, /EXPLICIT_INCLUDE_BETA/);
+});
+
+test("ask include excludes task files, runtime files, and binary files", (t) => {
+  const dir = sandbox(t);
+  fs.mkdirSync(path.join(dir, "src"));
+  writeFile(dir, "src/task.md", "TASK_SECRET_SHOULD_NOT_BE_IN_SOURCE_CONTEXT\n");
+  writeFile(dir, "src/context.txt", "EXPLICIT_CONTEXT_VISIBLE\n");
+  writeFile(dir, "src/note.local.md", "LOCAL_SECRET_SHOULD_NOT_APPEAR\n");
+  writeFile(dir, "src/ledger.jsonl", "RUNTIME_SECRET_SHOULD_NOT_APPEAR\n");
+  fs.writeFileSync(path.join(dir, "src/blob.bin"), Buffer.from([0, 1, 2, 3, 0, 255]));
+
+  const dryRun = ok(runBridge(dir, [
+    "ask",
+    "--dry-run",
+    "--mode",
+    "review-only",
+    "--task",
+    "src/task.md",
+    "--include",
+    "src",
+    "--raw",
+  ]));
+  assert.equal(dryRun.sourceContext.included, true);
+  assert.equal(dryRun.sourceContext.reason, "explicit include");
+  assert.equal(dryRun.sourceContext.includeCount, 1);
+  assert.equal(dryRun.sourceContext.includeSkippedCount, 4);
+  assert.match(dryRun.sourceContext.text, /EXPLICIT_CONTEXT_VISIBLE/);
+  assert.match(dryRun.sourceContext.text, /binary-looking file/);
+  assert.doesNotMatch(dryRun.sourceContext.text, /TASK_SECRET_SHOULD_NOT_BE_IN_SOURCE_CONTEXT/);
+  assert.doesNotMatch(dryRun.sourceContext.text, /LOCAL_SECRET_SHOULD_NOT_APPEAR/);
+  assert.doesNotMatch(dryRun.sourceContext.text, /RUNTIME_SECRET_SHOULD_NOT_APPEAR/);
+});
+
+test("ask include validates source context mode and path boundaries", (t) => {
+  const dir = sandbox(t);
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-include-outside-"));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  writeFile(dir, "task.md", "Review include validation.");
+  writeFile(dir, "context.txt", "Visible only when include is valid.");
+  writeFile(other, "outside.txt", "OUTSIDE_SECRET_SHOULD_NOT_APPEAR\n");
+
+  fails(
+    runBridge(dir, ["ask", "--dry-run", "--task", "task.md", "--include", "context.txt", "--source-context", "off"]),
+    /--include cannot be used with --source-context off/,
+  );
+  fails(
+    runBridge(dir, ["ask", "--dry-run", "--task", "task.md", "--include", "missing.txt"]),
+    /--include path not found/,
+  );
+  fails(
+    runBridge(dir, ["ask", "--dry-run", "--task", "task.md", "--include", path.join(other, "outside.txt")]),
+    /--include path escapes bridge root/,
+  );
+});
+
+test("ask include handles symlink escapes and repeated in-root directories", (t) => {
+  const dir = sandbox(t);
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-include-symlink-"));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, "src"));
+  writeFile(dir, "task.md", "Review symlink handling.");
+  writeFile(dir, "src/context.txt", "SYMLINK_LOOP_CONTEXT_VISIBLE\n");
+  writeFile(other, "outside.txt", "SYMLINK_OUTSIDE_SECRET_SHOULD_NOT_APPEAR\n");
+
+  try {
+    fs.symlinkSync(path.join(other, "outside.txt"), path.join(dir, "src", "outside-link.txt"), "file");
+    fs.symlinkSync(path.join(dir, "src"), path.join(dir, "src", "self-link"), "junction");
+  } catch (error) {
+    t.skip(`symlink creation unavailable: ${error.message}`);
+    return;
+  }
+
+  fails(
+    runBridge(dir, ["ask", "--dry-run", "--task", "task.md", "--include", "src/outside-link.txt"]),
+    /--include path escapes bridge root/,
+  );
+
+  const dryRun = ok(runBridge(dir, [
+    "ask",
+    "--dry-run",
+    "--task",
+    "task.md",
+    "--include",
+    "src",
+    "--raw",
+  ]));
+  assert.equal(dryRun.sourceContext.included, true);
+  assert.match(dryRun.sourceContext.text, /SYMLINK_LOOP_CONTEXT_VISIBLE/);
+  assert.match(dryRun.sourceContext.text, /already visited/);
+  assert.doesNotMatch(dryRun.sourceContext.text, /SYMLINK_OUTSIDE_SECRET_SHOULD_NOT_APPEAR/);
+});
+
+test("ask include caps broad directory traversal", (t) => {
+  const dir = sandbox(t);
+  fs.mkdirSync(path.join(dir, "many"));
+  writeFile(dir, "task.md", "Review capped include.");
+  for (let index = 0; index < 95; index += 1) {
+    writeFile(dir, `many/file-${String(index).padStart(3, "0")}.txt`, `CAP_FILE_${index}\n`);
+  }
+
+  const dryRun = ok(runBridge(dir, [
+    "ask",
+    "--dry-run",
+    "--task",
+    "task.md",
+    "--include",
+    "many",
+    "--raw",
+  ]));
+  assert.equal(dryRun.sourceContext.includeCount, 80);
+  assert.equal(dryRun.sourceContext.includeLimits.fileLimitReached, true);
+  assert.match(dryRun.sourceContext.text, /file limit reached \(80\)/);
 });
 
 test("state command reports duet runtime files when they exist", (t) => {
