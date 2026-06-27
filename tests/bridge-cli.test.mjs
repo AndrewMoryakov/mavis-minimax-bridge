@@ -279,10 +279,11 @@ test("duet packet export validates agent and marks truncation visibly", (t) => {
   ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex"]));
   ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
 
-  fails(
-    runBridge(dir, ["duet", "packet", "export", "--agent", "codex"]),
-    /--agent minimax is the only supported packet export target/,
-  );
+  const codexPacket = ok(runBridge(dir, ["duet", "packet", "export", "--agent", "codex"]));
+  assert.equal(codexPacket.event, "duet-packet-export");
+  assert.equal(codexPacket.agent, "codex");
+  assert.equal(codexPacket.allowedToAct, false);
+  assert.equal(codexPacket.warning, "wrong_baton");
   const rawJson = ok(runBridge(dir, [
     "duet",
     "packet",
@@ -609,6 +610,7 @@ test("duet loop dry-run previews next agent step and does not mutate relay files
   assert.equal(dryRun.verifier.path.basename, "verify.mjs");
   assert.deepEqual(dryRun.verifier.args, ["--fast"]);
   assert.equal(dryRun.limits.maxRounds, 4);
+  assert.equal(dryRun.limits.profile, "default");
   assert.deepEqual(dryRun.requirements.requiredAgents, []);
   assert.deepEqual(dryRun.requirements.satisfiedAgents, []);
   assert.deepEqual(dryRun.requirements.missingAgents, []);
@@ -628,6 +630,8 @@ test("duet loop dry-run reports terminal and budget stops without agent preview"
   assert.equal(terminal.wouldRunLoop, false);
   assert.deepEqual(terminal.stopReasons, ["terminal_status:done"]);
   assert.equal(terminal.nextStep, null);
+  const terminalWithLowRoundLimit = ok(runBridge(doneDir, ["duet", "loop", "--dry-run", "--max-rounds", "1"]));
+  assert.deepEqual(terminalWithLowRoundLimit.stopReasons, ["terminal_status:done"]);
 
   const budgetDir = sandbox(t);
   writeFile(budgetDir, "goal.md", "Loop budget goal");
@@ -637,6 +641,27 @@ test("duet loop dry-run reports terminal and budget stops without agent preview"
   assert.match(budget.stopReasons.join(","), /token_budget:/);
   assert.equal(budget.nextStep.agent, "codex");
   assert.equal(budget.nextStep.withinTokenBudget, false);
+});
+
+test("duet loop smoke profile applies compact defaults and allows overrides", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Loop smoke profile goal");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const smoke = ok(runBridge(dir, ["duet", "loop", "--dry-run", "--profile", "smoke"]));
+  assert.equal(smoke.event, "duet-loop-dry-run");
+  assert.equal(smoke.limits.profile, "smoke");
+  assert.equal(smoke.limits.maxRounds, 2);
+  assert.equal(smoke.limits.maxCodexSteps, 1);
+  assert.equal(smoke.limits.maxMiniMaxSteps, 1);
+  assert.equal(smoke.limits.maxTokens, 60000);
+  assert.equal(smoke.limits.maxPacketChars, 20000);
+
+  const override = ok(runBridge(dir, ["duet", "loop", "--dry-run", "--profile", "smoke", "--max-rounds", "4"]));
+  assert.equal(override.limits.profile, "smoke");
+  assert.equal(override.limits.maxRounds, 4);
+
+  fails(runBridge(dir, ["duet", "loop", "--dry-run", "--profile", "huge"]), /--profile must be smoke or default/);
 });
 
 test("duet loop dry-run validates required agents", (t) => {
@@ -783,6 +808,9 @@ test("duet loop yes stops when actual step usage exceeds token budget", (t) => {
   assert.equal(result.event, "duet-loop");
   assert.equal(result.status, "running");
   assert.match(result.stopReasons.join(","), /actual_token_budget:/);
+  assert.equal(result.budget.actualExceeded, true);
+  assert.equal(result.budget.violation, "actual");
+  assert.equal(result.budget.terminalStatus, "running");
   assert.equal(result.counts.rounds, 1);
   assert.equal(result.counts.codexSteps, 1);
   assert.equal(result.counts.minimaxSteps, 0);
@@ -860,6 +888,8 @@ test("duet report summarizes the latest loop without leaking relay text", (t) =>
   assert.equal(report.state.status, "done");
   assert.equal(report.lastLoop.found, true);
   assert.deepEqual(report.lastLoop.stopReasons, ["terminal_status:done"]);
+  assert.equal(report.lastLoop.terminalStatus, "done");
+  assert.equal(report.lastLoop.budget.actualExceeded, false);
   assert.equal(report.lastLoop.counts.codexSteps, 1);
   assert.equal(report.lastLoop.steps[0].agent, "codex");
   assert.equal(typeof report.transcript.journal.sha256, "string");
@@ -871,6 +901,7 @@ test("duet report summarizes the latest loop without leaking relay text", (t) =>
   const text = fs.readFileSync(path.join(dir, "duet-report.local.md"), "utf8");
   assert.match(text, /# Duet Run Report/);
   assert.match(text, /terminal_status:done/);
+  assert.match(text, /Budget:/);
   assert.doesNotMatch(text, new RegExp(secret));
 });
 

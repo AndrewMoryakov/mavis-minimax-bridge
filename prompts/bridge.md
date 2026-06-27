@@ -22,19 +22,19 @@ Rules:
 - Prefer `duet start --goal <file>` over raw `duet init` for a new relay; it is
   local-only and returns the recommended dry-run/live/report commands.
 - Use `duet next` before acting when baton ownership is unclear.
-- Use `duet packet export --agent minimax` when a compact derived packet is
-  needed for the MiniMax side; packets are projections, not relay state.
+- Use `duet packet export --agent codex|minimax` when a compact derived packet
+  is needed for either side; packets are projections, not relay state.
 - Use `duet step --agent codex|minimax --dry-run` before any real duet step; it
   is local-only and token-free.
 - Use `duet step --agent minimax --yes` or `duet step --agent codex --yes` only
   after explicit token-spending approval; each runs one relay turn and applies
   the handoff.
 - Use `duet loop --dry-run` to preview an autonomous loop without spending
-  tokens.
+  tokens. Prefer `--profile smoke` for compact live validation.
 - Use `duet loop --yes` only after explicit token-spending approval; it can run
   both Codex and MiniMax steps.
 - Use `duet report` after a loop or step sequence to summarize stop reasons,
-  usage, verifier results, transcript hashes, and next commands without
+  budget diagnostics, usage, verifier results, transcript hashes, and next commands without
   revealing local relay text.
 - Use token-spending commands only after explicit user approval.
 - Never send to a guessed, burned, denied, or expensive `mvs_...` session.

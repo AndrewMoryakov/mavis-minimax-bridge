@@ -264,7 +264,8 @@ node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcri
 
 `duet report` is local-only and redacted. Use it after `duet loop --yes` to
 see the final state, stop reasons, step counts, token usage, verifier summaries,
-transcript hashes, and suggested continuation commands.
+transcript hashes, suggested continuation commands, and the separated budget
+diagnostics for estimated vs actual token usage.
 
 Raw transcript exports require explicit `--raw`; raw file output must use a
 `.local.*` path.
@@ -273,9 +274,10 @@ Raw transcript exports require explicit `--raw`; raw file output must use a
 whether the requested agent may act, terminal or wrong-baton warnings, static
 next-action hints, and the latest recorded verifier summary.
 
-Export a derived packet projection for MiniMax:
+Export a derived packet projection for either agent:
 
 ```powershell
+node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\duet-packet.local.md
 ```
@@ -306,7 +308,7 @@ node .\bridge.mjs duet step --agent codex --yes
 `duet step --agent minimax --yes` is token-spending and sends the bounded packet
 through the review-only MiniMax path. `duet step --agent codex --yes` is also
 token-spending and runs a separate non-interactive `codex exec` process with
-`--ignore-user-config`, `--ephemeral`, explicit `--cd`, and a bridge timeout.
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, explicit `--cd`, and a bridge timeout.
 Both commands store the answer as a pending local handoff, apply it through the
 same hardened `duet pass` validation, and redact the answer in stdout unless
 `--raw` is passed. If apply fails, the baton is not advanced and the pending
@@ -317,12 +319,17 @@ Preview or run a bounded autonomous loop:
 ```powershell
 node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
 node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --dry-run --profile smoke --require-agents codex,minimax
 ```
 
 `duet loop --dry-run` is a Phase 5C preflight. It does not run Codex, MiniMax,
 or a verifier. It reports whether the current relay can continue, which agent
 would act next, estimated input tokens, loop limits, verifier configuration,
 and stop reasons such as terminal status or token budget.
+
+Use `--profile smoke` for compact live validation. It defaults to two rounds,
+one Codex step, one MiniMax step, a smaller packet budget, and the standard
+token budget. Explicit `--max-*` flags still override the profile.
 
 `duet loop --yes` is token-spending. It alternates the current baton holder
 through the same hardened `duet step --agent <agent> --yes` path, optionally
@@ -343,7 +350,9 @@ node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
 
 The report is safe to inspect by default: it summarizes the latest `duet-loop`
 ledger event and current relay state without printing local goal, handoff, or
-journal text.
+journal text. It separates relay terminal status from loop stop reasons and
+includes a `budget` block with estimated input, actual usage where available,
+and any budget violation.
 
 Run a local verifier through the bridge:
 
@@ -440,12 +449,14 @@ node .\bridge.mjs mvs-send --session mvs_<id> --task path\to\task.md --yes
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
 node .\bridge.mjs duet next
+node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
+node .\bridge.mjs duet loop --dry-run --profile smoke
 node .\bridge.mjs duet loop --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier .\verify.mjs

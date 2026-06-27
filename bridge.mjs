@@ -92,9 +92,9 @@ function usage() {
   node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
-  node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
+  node .\\bridge.mjs duet packet export --agent codex|minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--raw] [--max-packet-chars <n>] [--port <port>]
-  node .\\bridge.mjs duet loop --dry-run [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
+  node .\\bridge.mjs duet loop --dry-run [--profile smoke] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
   node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
@@ -2449,11 +2449,13 @@ function duetReportPayload(args) {
       ts: latestLoop.ts || null,
       mode: latestLoop.mode || null,
       status: latestLoop.status || null,
+      terminalStatus: latestLoop.terminalStatus || latestLoop.status || null,
       stopReasons: Array.isArray(latestLoop.stopReasons) ? latestLoop.stopReasons : [],
       durationMs: latestLoop.durationMs ?? null,
       counts: latestLoop.counts || null,
       usage: latestLoop.usage || null,
       limits: latestLoop.limits || null,
+      budget: latestLoop.budget || null,
       requirements: latestLoop.requirements || null,
       suppressedTerminalStatuses: Array.isArray(latestLoop.suppressedTerminalStatuses) ? latestLoop.suppressedTerminalStatuses : [],
       steps: Array.isArray(latestLoop.steps) ? latestLoop.steps.map(reportStepSummary) : [],
@@ -2487,11 +2489,13 @@ function renderDuetReportMarkdown(payload) {
     lines.push(`Timestamp: ${lastLoop.ts}`);
     lines.push(`Mode: ${lastLoop.mode}`);
     lines.push(`Status: ${lastLoop.status}`);
+    if (lastLoop.terminalStatus && lastLoop.terminalStatus !== lastLoop.status) lines.push(`Terminal status: ${lastLoop.terminalStatus}`);
     lines.push(`Stop reasons: ${lastLoop.stopReasons.length ? lastLoop.stopReasons.join(", ") : "none"}`);
     lines.push(`Duration ms: ${lastLoop.durationMs ?? "unknown"}`);
     lines.push(`Counts: ${JSON.stringify(lastLoop.counts || {})}`);
     lines.push(`Usage: ${JSON.stringify(lastLoop.usage || {})}`);
     lines.push(`Limits: ${JSON.stringify(lastLoop.limits || {})}`);
+    if (lastLoop.budget) lines.push(`Budget: ${JSON.stringify(lastLoop.budget)}`);
     if (lastLoop.requirements) lines.push(`Requirements: ${JSON.stringify(lastLoop.requirements)}`);
     if (lastLoop.suppressedTerminalStatuses?.length) lines.push(`Suppressed terminals: ${JSON.stringify(lastLoop.suppressedTerminalStatuses)}`);
     lines.push("");
@@ -2791,7 +2795,6 @@ function duetPacketExport(args) {
   if (!["json", "markdown"].includes(format)) throw new Error("--format must be json or markdown");
   const raw = rest.includes("--raw");
   const agent = requireDuetAgent(argValue(rest, "--agent"), "--agent");
-  if (agent !== "minimax") throw new Error("--agent minimax is the only supported packet export target in Phase 4A");
   const configuredMax = Number(config.duetPacketMaxChars || 60000);
   const maxPacketChars = positiveIntegerArg(rest, "--max-packet-chars", String(configuredMax));
   const maxLongPromptChars = Number(config.maxLongPromptChars || 160000);
@@ -2843,7 +2846,8 @@ function duetStepPrompt(agent, packetText) {
   if (agent === "codex") {
     return [
       "You are Codex participating in Mavis MiniMax Bridge Duet Relay.",
-      "Continue the shared task from the packet below inside the current workspace.",
+      "Use only the Duet packet below as task context unless it explicitly asks you to inspect files.",
+      "Keep the turn bounded: inspect the smallest useful file set, avoid broad recursive reads, and do not restate large documents.",
       "You may inspect and edit local files when that is the next useful step.",
       "Do not commit, push, or run destructive commands.",
       "Do not ask the human to approve routine continuation; escalate only for a real human decision.",
@@ -3074,6 +3078,7 @@ async function runCodexExecTurn(promptText, envelope, outputPath) {
     "workspace-write",
     "--ephemeral",
     "--ignore-user-config",
+    "--ignore-rules",
     "--json",
     "--output-last-message",
     outputPath,
@@ -3428,8 +3433,24 @@ function parseDuetLoopOptions(args) {
   const options = parsed.options;
   const raw = options.includes("--raw");
   if (options.includes("--force")) throw new Error("duet loop does not support --force");
-  const configuredMax = Number(config.duetPacketMaxChars || 60000);
-  const maxPacketChars = positiveIntegerArg(options, "--max-packet-chars", String(configuredMax));
+  const profile = argValue(options, "--profile", "default");
+  if (!["default", "smoke"].includes(profile)) throw new Error("--profile must be smoke or default");
+  const profileDefaults = profile === "smoke"
+    ? {
+      maxPacketChars: "20000",
+      maxRounds: "2",
+      maxCodexSteps: "1",
+      maxMiniMaxSteps: "1",
+      maxTokens: "60000",
+    }
+    : {
+      maxPacketChars: String(config.duetPacketMaxChars || 60000),
+      maxRounds: "8",
+      maxCodexSteps: "8",
+      maxMiniMaxSteps: "8",
+      maxTokens: "60000",
+    };
+  const maxPacketChars = positiveIntegerArg(options, "--max-packet-chars", profileDefaults.maxPacketChars);
   const maxLongPromptChars = Number(config.maxLongPromptChars || 160000);
   if (maxPacketChars > maxLongPromptChars) {
     throw new Error(`--max-packet-chars must be <= maxLongPromptChars=${maxLongPromptChars}`);
@@ -3438,12 +3459,13 @@ function parseDuetLoopOptions(args) {
   validateForwardedVerifierArgs(parsed.forwarded);
   return {
     options,
+    profile,
     raw,
     maxPacketChars,
-    maxRounds: positiveIntegerArg(options, "--max-rounds", "8"),
-    maxCodexSteps: positiveIntegerArg(options, "--max-codex-steps", "8"),
-    maxMiniMaxSteps: positiveIntegerArg(options, "--max-minimax-steps", "8"),
-    maxTokens: positiveIntegerArg(options, "--max-tokens", "60000"),
+    maxRounds: positiveIntegerArg(options, "--max-rounds", profileDefaults.maxRounds),
+    maxCodexSteps: positiveIntegerArg(options, "--max-codex-steps", profileDefaults.maxCodexSteps),
+    maxMiniMaxSteps: positiveIntegerArg(options, "--max-minimax-steps", profileDefaults.maxMiniMaxSteps),
+    maxTokens: positiveIntegerArg(options, "--max-tokens", profileDefaults.maxTokens),
     requiredAgents: parseRequiredDuetAgents(options),
     verifierTimeoutSec: positiveIntegerArg(options, "--verifier-timeout-sec", "60"),
     verifier: verifierPathArg
@@ -3497,7 +3519,7 @@ function duetLoopDryRun(args) {
   if (args.includes("--yes")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
 
   const loop = parseDuetLoopOptions(args);
-  const { raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, requiredAgents, verifier } = loop;
+  const { profile, raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, requiredAgents, verifier } = loop;
   const state = readDuetState();
   const journal = readDuetJournal();
 
@@ -3507,7 +3529,7 @@ function duetLoopDryRun(args) {
   if (state.status !== "running") {
     stopReasons.push(`terminal_status:${state.status}`);
   }
-  if (state.iteration > maxRounds) {
+  if (state.status === "running" && state.iteration > maxRounds) {
     stopReasons.push(`max_rounds:${state.iteration}/${maxRounds}`);
   }
   if (state.status === "running" && !state.baton) {
@@ -3533,6 +3555,7 @@ function duetLoopDryRun(args) {
     warning: warnings[0] || null,
     warnings,
     limits: {
+      profile,
       maxRounds,
       maxCodexSteps,
       maxMiniMaxSteps,
@@ -3581,7 +3604,7 @@ async function duetLoopLive(args) {
   if (args.includes("--dry-run")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
   requireSpendingApproval(args, "duet loop");
   const loop = parseDuetLoopOptions(args);
-  const { raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, requiredAgents } = loop;
+  const { profile, raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, requiredAgents } = loop;
   const startedAt = now();
   const startedMs = Date.now();
   const steps = [];
@@ -3703,6 +3726,9 @@ async function duetLoopLive(args) {
 
   if (stopReasons.length === 0) stopReasons.push(`max_rounds:${maxRounds}`);
   const finalState = readDuetState();
+  const actualTokens = totalInputTokens + totalOutputTokens;
+  const estimatedExceeded = totalEstimatedInputTokens > maxTokens;
+  const actualExceeded = actualTokens > maxTokens;
   const out = {
     event: "duet-loop",
     mode: "live",
@@ -3712,6 +3738,7 @@ async function duetLoopLive(args) {
     durationMs: Date.now() - startedMs,
     stopReasons,
     status: finalState.status,
+    terminalStatus: finalState.status,
     steps,
     verifierRuns,
     counts: {
@@ -3725,11 +3752,22 @@ async function duetLoopLive(args) {
       outputTokens: totalOutputTokens,
     },
     limits: {
+      profile,
       maxRounds,
       maxCodexSteps,
       maxMiniMaxSteps,
       maxTokens,
       maxPacketChars,
+    },
+    budget: {
+      maxTokens,
+      estimatedInputTokens: totalEstimatedInputTokens,
+      actualTokens,
+      estimatedExceeded,
+      actualExceeded,
+      violation: actualExceeded ? "actual" : (estimatedExceeded ? "estimated" : null),
+      terminalStatus: finalState.status,
+      stopReasons,
     },
     requirements: {
       requiredAgents,
@@ -4158,9 +4196,9 @@ async function duetCommand(args) {
   node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
-  node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
+  node .\\bridge.mjs duet packet export --agent codex|minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--raw] [--max-packet-chars <n>] [--port <port>]
-  node .\\bridge.mjs duet loop --dry-run [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
+  node .\\bridge.mjs duet loop --dry-run [--profile smoke] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
   node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]

@@ -13,6 +13,7 @@ $promptText | & $CodexCli exec `
   --sandbox workspace-write `
   --ephemeral `
   --ignore-user-config `
+  --ignore-rules `
   --json `
   --output-last-message $OutputLastMessage `
   -

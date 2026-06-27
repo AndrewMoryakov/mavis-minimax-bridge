@@ -54,6 +54,12 @@ Run the dry run from the launch packet:
 node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
 ```
 
+For a shorter smoke validation, use the built-in smoke profile:
+
+```powershell
+node .\bridge.mjs duet loop --dry-run --profile smoke --require-agents codex,minimax
+```
+
 Check:
 
 - `wouldRunLoop` is `true`.
@@ -78,6 +84,12 @@ After the dry run looks right, explicitly approve the token-spending loop:
 
 ```powershell
 node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
+```
+
+For a compact smoke run:
+
+```powershell
+node .\bridge.mjs duet loop --yes --profile smoke --require-agents codex,minimax
 ```
 
 With a verifier:
@@ -107,6 +119,9 @@ The report shows:
 - latest loop stop reason;
 - Codex/MiniMax step counts;
 - observed token usage;
+- budget diagnostics (`estimatedInputTokens`, actual usage where the provider
+  reports it, and whether the stop was caused by `token_budget` or
+  `actual_token_budget`);
 - verifier summaries;
 - transcript hashes;
 - suggested continuation commands.
@@ -136,8 +151,10 @@ them local unless the human explicitly decides otherwise.
 - If the loop stopped on `max_rounds`, `max_codex_steps`, or
   `max_minimax_steps`, run `duet report`, then another `duet loop --dry-run`
   with updated limits.
-- If it stopped on `actual_token_budget` or `token_budget`, raise
-  `--max-tokens` only after the human accepts the cost.
+- If it stopped on `actual_token_budget` or `token_budget`, inspect `budget` in
+  `duet report`. A relay may still have terminal status `done`; the budget
+  stop explains why the loop stopped and whether actual usage exceeded the
+  accepted cost. Raise `--max-tokens` only after the human accepts the cost.
 - If it stopped on `verifier_fail`, inspect the verifier output summary and the
   journal before continuing.
 - If it stopped on `step_apply_failed`, inspect the pending `.local.md` handoff

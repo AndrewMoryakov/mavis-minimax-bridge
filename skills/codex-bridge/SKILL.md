@@ -107,12 +107,14 @@ node .\bridge.mjs duet start --goal path\to\goal.md --baton codex --max-iteratio
 node .\bridge.mjs duet init --goal path\to\goal.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
 node .\bridge.mjs duet next
+node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
+node .\bridge.mjs duet loop --dry-run --profile smoke
 node .\bridge.mjs duet loop --yes
 node .\bridge.mjs duet report
 node .\bridge.mjs duet transcript export
@@ -137,7 +139,7 @@ Use `duet next` before acting when baton ownership is unclear. It reports
 allowed-to-act state, warnings, static next-action hints, and the latest
 recorded verifier summary without spending tokens.
 
-Use `duet packet export --agent minimax` when the MiniMax side needs a compact
+Use `duet packet export --agent codex|minimax` when either side needs a compact
 derived packet. Packet exports are local-only projections, not runtime state.
 
 Use `duet step --dry-run` before any real duet step. It is local-only,
@@ -151,7 +153,7 @@ local handoff, apply it through hardened `duet pass`, and redact the answer by
 default.
 
 Use `duet loop --dry-run` to preview the autonomous loop without spending
-tokens. It reports stop reasons, next agent, token estimate, limits, and
+tokens. Prefer `--profile smoke` for compact live validation. It reports stop reasons, next agent, token estimate, limits, and
 optional verifier configuration.
 
 Run `duet loop --yes` only after explicit token-spending approval. It alternates
@@ -161,7 +163,8 @@ limits, token budget, repeated handoff hash, apply failure, or verifier failure.
 
 Use `duet report` after a loop or step sequence for a local-only redacted run
 summary: current state, latest loop stop reasons, step counts, token usage,
-verifier summaries, transcript hashes, and suggested continuation commands.
+budget diagnostics, verifier summaries, transcript hashes, and suggested
+continuation commands.
 
 Use `duet transcript export` for a redacted JSON transcript. Add
 `--format markdown --out .\duet-transcript.local.md` for a Markdown artifact.

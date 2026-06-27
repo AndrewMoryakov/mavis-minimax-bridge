@@ -61,12 +61,14 @@ node .\bridge.mjs canary-estimate
 node .\bridge.mjs duet start --goal path\to\goal.md --baton minimax --max-iterations 12
 node .\bridge.mjs duet show
 node .\bridge.mjs duet next
+node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
+node .\bridge.mjs duet loop --dry-run --profile smoke
 node .\bridge.mjs duet loop --yes
 node .\bridge.mjs duet report
 node .\bridge.mjs duet transcript export
@@ -200,10 +202,11 @@ Run:
 
 ```powershell
 node .\bridge.mjs duet packet export --agent minimax
+node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\duet-packet.local.md
 ```
 
-Export a derived packet projection for MiniMax. This is local-only and redacted
+Export a derived packet projection for either agent. This is local-only and redacted
 by default. Packets are not runtime state.
 
 ### `/bridge duet step dry-run`
@@ -247,10 +250,12 @@ Run:
 
 ```powershell
 node .\bridge.mjs duet loop --dry-run
+node .\bridge.mjs duet loop --dry-run --profile smoke
 ```
 
-Previews the autonomous loop without spending tokens. It reports stop reasons,
-next agent, token estimate, limits, and optional verifier configuration.
+Previews the autonomous loop without spending tokens. Prefer `--profile smoke`
+for compact live validation. It reports stop reasons, next agent, token
+estimate, limits, and optional verifier configuration.
 
 ### `/bridge duet loop`
 
@@ -276,8 +281,8 @@ node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
 
 Summarize the current relay and latest autonomous loop without printing local
 goal, handoff, or journal text. This is local-only and reports stop reasons,
-step counts, token usage, verifier summaries, transcript hashes, and suggested
-continuation commands.
+step counts, token usage, budget diagnostics, verifier summaries, transcript
+hashes, and suggested continuation commands.
 
 ### `/bridge duet transcript export`
 

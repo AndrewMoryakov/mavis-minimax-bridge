@@ -147,9 +147,10 @@ node .\bridge.mjs duet next --agent minimax
 requested agent may act, terminal or wrong-baton warnings, static next-action
 hints, and the latest recorded verifier summary.
 
-Export a derived MiniMax packet projection:
+Export a derived packet projection for either agent:
 
 ```powershell
+node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\duet-packet.local.md
 ```
@@ -177,7 +178,7 @@ node .\bridge.mjs duet step --agent codex --yes
 
 `--yes` authorizes one token-spending agent call. MiniMax steps use the
 review-only MiniMax path. Codex steps run a separate `codex exec` process with
-`--ignore-user-config`, `--ephemeral`, explicit `--cd`, `workspace-write`
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, explicit `--cd`, `workspace-write`
 sandboxing, and a bridge timeout. The bridge stores the answer as a pending
 `.local.md` handoff, applies it via the same hardened `duet pass` path, then
 returns the baton to the other agent for `Status: running` replies or stops on
@@ -219,6 +220,6 @@ node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
 ```
 
 `duet report` is local-only and redacted. It reports the current relay state,
-the latest `duet-loop` stop reasons, step counts, token usage, verifier
-summaries, transcript hashes, and suggested continuation commands without
+the latest `duet-loop` stop reasons, step counts, token usage, budget
+diagnostics, verifier summaries, transcript hashes, and suggested continuation commands without
 printing local goal, handoff, or journal text.

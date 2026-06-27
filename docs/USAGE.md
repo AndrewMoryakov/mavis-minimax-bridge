@@ -37,12 +37,14 @@ node .\bridge.mjs duet start --goal .\duet-goal.local.md
 node .\bridge.mjs duet init --goal .\duet-goal.local.md
 node .\bridge.mjs duet show
 node .\bridge.mjs duet next
+node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
+node .\bridge.mjs duet loop --dry-run --profile smoke
 node .\bridge.mjs duet loop --yes
 node .\bridge.mjs duet report
 node .\bridge.mjs duet transcript export

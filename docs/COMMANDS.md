@@ -283,6 +283,7 @@ node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iter
 node .\bridge.mjs duet show
 node .\bridge.mjs duet next
 node .\bridge.mjs duet next --agent minimax
+node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\duet-packet.local.md
 node .\bridge.mjs duet step --agent minimax --dry-run
@@ -291,6 +292,7 @@ node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
 node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --dry-run --profile smoke --require-agents codex,minimax
 node .\bridge.mjs duet report
 node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
 node .\bridge.mjs duet transcript export
@@ -339,8 +341,8 @@ redacted by default. It reports whether the requested `--agent codex|minimax`
 may act, terminal or wrong-baton warnings, static next-action hints, and the
 latest recorded verifier summary.
 
-Use `duet packet export --agent minimax` to create a derived packet projection
-for the MiniMax side. It is local-only and redacted by default. Packets are
+Use `duet packet export --agent codex|minimax` to create a derived packet
+projection for either agent side. It is local-only and redacted by default. Packets are
 derived from `duet-state.json` and `duet-journal.md`; they are not runtime
 state. Raw file output requires explicit `--raw` and a `.local.*` path inside
 the bridge root.
@@ -357,7 +359,7 @@ pending handoff path is returned for manual recovery.
 
 Use `duet step --agent codex --yes` to run one real non-interactive Codex relay
 turn. This can spend OpenAI/Codex tokens. The bridge invokes `codex exec` with
-`--ignore-user-config`, `--ephemeral`, explicit `--cd`, `workspace-write`
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, explicit `--cd`, `workspace-write`
 sandboxing, and a bridge timeout. The last Codex message is written to a pending
 `.local.md` handoff and applied through the same hardened `duet pass` path.
 
@@ -366,6 +368,10 @@ tokens. It does not run Codex, MiniMax, or a verifier. It reports whether the
 current relay can continue, which agent would act next, estimated input tokens,
 loop limits, optional verifier configuration, required-agent settings, and stop
 reasons.
+
+Add `--profile smoke` for compact live validation. It defaults to two rounds,
+one Codex step, one MiniMax step, a smaller packet budget, and the standard
+token budget. Explicit `--max-*` flags still override the profile.
 
 Use `duet loop --yes` to run a bounded autonomous loop. This can spend both
 Codex/OpenAI and MiniMax tokens. It alternates the current baton holder through
@@ -381,8 +387,9 @@ suppress `human_escalation`.
 
 Use `duet report` after a loop or step sequence to get a redacted run summary.
 It reads the current relay state and the latest `duet-loop` ledger event, then
-reports stop reasons, step counts, token usage, verifier summaries, transcript
-hashes, and suggested continuation commands. It is local-only and does not
+reports stop reasons, step counts, token usage, budget diagnostics, verifier
+summaries, transcript hashes, and suggested continuation commands. It is
+local-only and does not
 print goal, handoff, or journal text.
 
 Use `duet verify` to run a Node verifier through the bridge. Verifiers must be
