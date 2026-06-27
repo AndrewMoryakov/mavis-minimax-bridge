@@ -172,6 +172,24 @@ Run:
 node .\bridge.mjs duet note --agent codex --note path\to\note.md
 ```
 
+### Natural language `let's go`
+
+If the user describes a task and ends with `let's go`, treat that as a request
+to start or continue Duet Relay.
+
+Expected behavior:
+
+1. Create a compact `duet-goal.local.md` from the user's task.
+2. If no relay exists, run `duet init` with MiniMax as the first baton holder.
+3. Run `duet show`.
+4. Do the next useful piece of work.
+5. Write a compact handoff file.
+6. Use `duet pass` to transfer the baton, or finish with `done` /
+   `human_escalation`.
+
+Do not run token-spending commands as part of `let's go` unless the user
+explicitly approves that separate action.
+
 ### `/bridge ask`
 
 Requires explicit user approval because it starts a model turn. Use a task file.

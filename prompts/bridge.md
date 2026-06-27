@@ -14,6 +14,10 @@ $ARGUMENTS
 Rules:
 
 - First inspect bridge state with local-only commands when the request is vague.
+- If the user describes a task and says `let's go`, treat it as a request to
+  start or continue Duet Relay. Create a compact local goal/handoff file, run
+  the appropriate `duet init/show/pass/note` commands, and keep working until
+  `done` or `human_escalation`.
 - Use token-spending commands only after explicit user approval.
 - Never send to a guessed, burned, denied, or expensive `mvs_...` session.
 - Prefer review-only collaboration before asking MiniMax for patch proposals.

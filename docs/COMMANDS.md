@@ -285,6 +285,9 @@ Duet command output is redacted by default: goal, handoff, escalation text, and
 journal content are summarized by size and SHA-256. Add `--raw` only when you
 intentionally need local relay text in stdout.
 
+For the simplest user flow, describe the task to Codex or MiniMax and end with
+`let's go`. See [LETS_GO.md](LETS_GO.md).
+
 ## Logs
 
 ```powershell

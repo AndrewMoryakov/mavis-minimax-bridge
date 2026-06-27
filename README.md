@@ -190,6 +190,23 @@ MiniMax after the human gives the initial goal. It deliberately avoids hard-code
 roles, project templates, and background sends. The agents decide what to do
 next, while the bridge preserves the shared state and stops runaway loops.
 
+Human quick start:
+
+```text
+Task:
+<describe the task>
+
+Use Mavis MiniMax Bridge Duet Relay.
+Start with yourself as the first baton holder.
+Work safely, verify what you can, pass the baton to the other agent when useful,
+and return to me only when the task is done or needs a real human decision.
+
+let's go
+```
+
+See [docs/LETS_GO.md](docs/LETS_GO.md) for the agent-side behavior behind this
+prompt.
+
 Initialize a relay from a local goal file:
 
 ```powershell
@@ -419,6 +436,8 @@ node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repe
 - [docs/COMMANDS.md](docs/COMMANDS.md): full CLI command reference.
 - [docs/DUET_RELAY.md](docs/DUET_RELAY.md): minimal baton-passing protocol for
   Codex and MiniMax.
+- [docs/LETS_GO.md](docs/LETS_GO.md): simplest human-facing prompt to start a
+  Duet Relay.
 - [docs/RUNTIME_FILES.md](docs/RUNTIME_FILES.md): local runtime file contract.
 - [docs/TESTING.md](docs/TESTING.md): offline regression suite and release
   checks.

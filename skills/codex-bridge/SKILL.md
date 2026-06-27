@@ -111,6 +111,24 @@ node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff p
 are local ignored runtime files. Keep handoffs compact; goal, handoff, and note
 files are limited to 20000 characters.
 
+### Natural Language Start
+
+If the user describes a task and ends with `let's go`, treat that as a request
+to start or continue Duet Relay.
+
+Expected behavior:
+
+1. Create a compact `duet-goal.local.md` from the user's task.
+2. If no relay exists, run `duet init` with yourself as the first baton holder.
+3. Run `duet show`.
+4. Do the next useful piece of work.
+5. Write a compact handoff file.
+6. Use `duet pass` to transfer the baton, or finish with `done` /
+   `human_escalation`.
+
+Do not run token-spending commands as part of `let's go` unless the user
+explicitly approves that separate action.
+
 ## Collaboration With MiniMax
 
 Estimate before spending tokens:

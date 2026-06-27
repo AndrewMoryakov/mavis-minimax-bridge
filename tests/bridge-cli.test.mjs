@@ -195,11 +195,17 @@ test("installable skill and prompt surfaces document duet relay", () => {
     "README.md",
     "docs/COMMANDS.md",
     "docs/DUET_RELAY.md",
+    "docs/LETS_GO.md",
     "docs/RUNTIME_FILES.md",
   ];
 
   for (const relative of files) {
     const text = fs.readFileSync(path.join(repoRoot, relative), "utf8");
     assert.match(text, /duet|Duet/, `${relative} should mention Duet`);
+  }
+
+  for (const relative of ["skills/bridge/SKILL.md", "skills/codex-bridge/SKILL.md", "prompts/bridge.md", "docs/LETS_GO.md"]) {
+    const text = fs.readFileSync(path.join(repoRoot, relative), "utf8");
+    assert.match(text, /let's go/, `${relative} should document the natural-language start`);
   }
 });
