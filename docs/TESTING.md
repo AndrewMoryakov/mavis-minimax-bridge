@@ -31,6 +31,12 @@ Covered areas:
 - Duet lifecycle: `init`, `show`, `pass`, `note`, `done`.
 - Redacted output by default and explicit `--raw` behavior.
 - Raw output behavior for mutating Duet commands.
+- `duet next` baton inspection, wrong-baton warnings, terminal states, redaction,
+  and latest verifier summaries.
+- `duet packet export` redaction, raw local output, path safety, agent
+  validation, and visible truncation.
+- `duet step --agent minimax --dry-run` baton/status validation, token estimate,
+  redaction, raw prompt opt-in, and no ledger/model-call side effect.
 - Redacted and raw `duet transcript export`, including Markdown output and raw
   output path protection.
 - `duet verify` verifier execution, redacted/raw output, non-zero exit codes,
@@ -39,6 +45,7 @@ Covered areas:
 - `maxIterations` stop behavior.
 - Explicit `human_escalation`.
 - Wrong baton and invalid agent names.
+- `duet pass` handoff path boundary and regular-file validation.
 - Invalid arguments and oversized goal/handoff/note files.
 - Malformed or damaged `duet-state.json`, missing `duet-journal.md`, and empty
   `duet-journal.md`.

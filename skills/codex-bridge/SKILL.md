@@ -23,7 +23,8 @@ Always run commands from the repository root.
 
 - Local-only commands: `doctor`, `status`, `state`, `config show`, `mode list`,
   `session show`, `deny-session list`, `token-stats --ledger`, `audit`,
-  `canary-estimate`, `tail`, and `duet init/show/pass/note`.
+  `canary-estimate`, `tail`, `duet init/show/next/pass/note`,
+  `duet packet export`, and `duet step --dry-run`.
 - Token-spending commands: `ask`, `mvs-send`, `canary`, and `optimize-check`
   without `--skip-canary`.
 - Ask for explicit user approval before running token-spending commands.
@@ -101,6 +102,9 @@ a model prompt:
 ```powershell
 node .\bridge.mjs duet init --goal path\to\goal.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
+node .\bridge.mjs duet next
+node .\bridge.mjs duet packet export --agent minimax
+node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff path\to\handoff.md
@@ -116,7 +120,19 @@ node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff p
 
 `duet-state.json`, `duet-journal.md`, `duet.lock`, and duet atomic temp files
 are local ignored runtime files. Keep handoffs compact; goal, handoff, and note
-files are limited to 20000 characters.
+files are limited to 20000 characters. `duet pass --handoff` accepts only
+regular files inside the bridge root.
+
+Use `duet next` before acting when baton ownership is unclear. It reports
+allowed-to-act state, warnings, static next-action hints, and the latest
+recorded verifier summary without spending tokens.
+
+Use `duet packet export --agent minimax` when the MiniMax side needs a compact
+derived packet. Packet exports are local-only projections, not runtime state.
+
+Use `duet step --agent minimax --dry-run` before any real MiniMax duet step. It
+is local-only, token-free, and validates status, baton, route/model, and
+estimated input tokens.
 
 Use `duet transcript export` for a redacted JSON transcript. Add
 `--format markdown --out .\duet-transcript.local.md` for a Markdown artifact.

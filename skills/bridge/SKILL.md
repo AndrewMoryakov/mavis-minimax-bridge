@@ -22,7 +22,8 @@ Always run commands from that directory.
 
 - `doctor`, `status`, `state`, `audit`, `token-stats`, `session show`, `mode list`, and
   `canary-estimate` are local-only and do not intentionally start a model turn.
-- `duet init`, `duet show`, `duet pass`, and `duet note` are local-only
+- `duet init`, `duet show`, `duet next`, `duet packet export`,
+  `duet step --dry-run`, `duet pass`, and `duet note` are local-only
   coordination commands. They do not call MiniMax.
 - `ask`, `canary`, `optimize-check` without `--skip-canary`, and `mvs-send`
   can spend tokens. Ask for explicit user approval before running them.
@@ -55,6 +56,9 @@ node .\bridge.mjs mode list
 node .\bridge.mjs session show
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs duet show
+node .\bridge.mjs duet next
+node .\bridge.mjs duet packet export --agent minimax
+node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 ```
@@ -156,6 +160,41 @@ Summarize the current relay without printing local goal, handoff, or journal
 text. Use `--raw` only when the user explicitly asks for the full local relay
 content.
 
+### `/bridge duet next`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet next
+node .\bridge.mjs duet next --agent codex
+node .\bridge.mjs duet next --agent minimax
+```
+
+Inspect who should act next. This is local-only and redacted by default.
+
+### `/bridge duet packet export`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet packet export --agent minimax
+node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\duet-packet.local.md
+```
+
+Export a derived packet projection for MiniMax. This is local-only and redacted
+by default. Packets are not runtime state.
+
+### `/bridge duet step dry-run`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet step --agent minimax --dry-run
+```
+
+Preview a future MiniMax step without spending tokens. It validates baton,
+status, packet size, route/model, and estimated input tokens.
+
 ### `/bridge duet transcript export`
 
 Run:
@@ -200,6 +239,8 @@ Run:
 ```powershell
 node .\bridge.mjs duet pass --from codex --to minimax --handoff path\to\handoff.md
 ```
+
+The handoff must be a regular file inside the bridge root.
 
 If the relay is complete or needs the human, use:
 

@@ -19,6 +19,11 @@ Rules:
   start or continue Duet Relay. Create a compact local goal/handoff file, run
   the appropriate `duet init/show/pass/note` commands, and keep working until
   `done` or `human_escalation`.
+- Use `duet next` before acting when baton ownership is unclear.
+- Use `duet packet export --agent minimax` when a compact derived packet is
+  needed for the MiniMax side; packets are projections, not relay state.
+- Use `duet step --agent minimax --dry-run` before any real MiniMax duet step;
+  it is local-only and token-free.
 - Use token-spending commands only after explicit user approval.
 - Never send to a guessed, burned, denied, or expensive `mvs_...` session.
 - Prefer review-only collaboration before asking MiniMax for patch proposals.

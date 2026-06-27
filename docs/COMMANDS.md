@@ -278,6 +278,11 @@ These commands are local-only and do not call MiniMax:
 ```powershell
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
+node .\bridge.mjs duet next
+node .\bridge.mjs duet next --agent minimax
+node .\bridge.mjs duet packet export --agent minimax
+node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\duet-packet.local.md
+node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcript.local.md
 node .\bridge.mjs duet verify --verifier .\examples\duet-tetris-browser\verify.mjs -- --skip-relay-check
@@ -303,7 +308,8 @@ stale.
 
 Use `duet pass` to transfer the baton or stop the relay with `done` /
 `human_escalation`. `--max-iterations` is a safety limit; when reached, the
-relay stops with `human_escalation`.
+relay stops with `human_escalation`. Handoff files must be regular files inside
+the bridge root.
 
 Duet command output is redacted by default: goal, handoff, escalation text, and
 journal content are summarized by size and SHA-256. Add `--raw` only when you
@@ -312,6 +318,22 @@ intentionally need local relay text in stdout.
 Use `duet transcript export` to produce a redacted JSON or Markdown transcript
 for review. Add `--raw` only when local goal, handoff, and journal text are
 intentionally needed. Raw file exports require a `.local.*` output path.
+
+Use `duet next` to inspect baton ownership before acting. It is local-only and
+redacted by default. It reports whether the requested `--agent codex|minimax`
+may act, terminal or wrong-baton warnings, static next-action hints, and the
+latest recorded verifier summary.
+
+Use `duet packet export --agent minimax` to create a derived packet projection
+for the MiniMax side. It is local-only and redacted by default. Packets are
+derived from `duet-state.json` and `duet-journal.md`; they are not runtime
+state. Raw file output requires explicit `--raw` and a `.local.*` path inside
+the bridge root.
+
+Use `duet step --agent minimax --dry-run` to preview a future MiniMax model step
+without spending tokens. It validates status, baton ownership, iteration limits,
+packet size, route/model, and estimated input tokens. It does not call MiniMax,
+write a model handoff, or advance the baton.
 
 Use `duet verify` to run a Node verifier through the bridge. Verifiers must be
 `.js`, `.mjs`, or `.cjs` files inside the bridge root. The command uses

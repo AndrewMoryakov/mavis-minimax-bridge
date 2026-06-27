@@ -35,6 +35,9 @@ node .\bridge.mjs ask --yes --mode review-only --task .\task.md --include .\src
 node .\bridge.mjs ask --dry-run --raw --task .\task.md
 node .\bridge.mjs duet init --goal .\duet-goal.local.md
 node .\bridge.mjs duet show
+node .\bridge.mjs duet next
+node .\bridge.mjs duet packet export --agent minimax
+node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier .\verify.mjs
 npm run test:release

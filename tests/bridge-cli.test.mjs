@@ -103,6 +103,220 @@ test("duet lifecycle redacts by default and exposes text only with --raw", (t) =
   assert.match(JSON.stringify(rawShow), new RegExp(secret));
 });
 
+test("duet next reports baton, warnings, static actions, and redacts by default", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_DUET_NEXT_123";
+  writeFile(dir, "goal.md", `Goal ${secret}`);
+  writeFile(dir, "handoff.md", `Handoff ${secret}`);
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "3"]));
+  const codexNext = ok(runBridge(dir, ["duet", "next", "--agent", "codex"]));
+  assert.equal(codexNext.event, "duet-next");
+  assert.equal(codexNext.status, "running");
+  assert.equal(codexNext.baton, "codex");
+  assert.equal(codexNext.agent, "codex");
+  assert.equal(codexNext.allowedToAct, true);
+  assert.equal(codexNext.warning, null);
+  assert.deepEqual(codexNext.warnings, []);
+  assert.match(codexNext.nextActions.act.join("\n"), /duet pass --from codex/);
+  assert.doesNotMatch(JSON.stringify(codexNext), new RegExp(secret));
+
+  const minimaxNext = ok(runBridge(dir, ["duet", "next", "--agent", "minimax"]));
+  assert.equal(minimaxNext.allowedToAct, false);
+  assert.equal(minimaxNext.warning, "wrong_baton");
+  assert.match(minimaxNext.nextActions.recover.join("\n"), /duet pass --from codex --to minimax/);
+  assert.doesNotMatch(JSON.stringify(minimaxNext), new RegExp(secret));
+
+  const rawNext = ok(runBridge(dir, ["duet", "next", "--raw"]));
+  assert.equal(rawNext.raw, true);
+  assert.match(JSON.stringify(rawNext), new RegExp(secret));
+});
+
+test("duet next reports terminal states and latest verifier summary", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Next terminal goal");
+  writeFile(dir, "handoff.md", "Done handoff");
+  writeFile(dir, "verify with space.mjs", "console.log('ok');");
+
+  fails(runBridge(dir, ["duet", "next"]), /duet state is not initialized/);
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "1"]));
+  const recorded = ok(runBridge(dir, ["duet", "verify", "--verifier", "verify with space.mjs", "--record", "--agent", "codex"]));
+  assert.equal(recorded.status, "ok");
+
+  const limitNext = ok(runBridge(dir, ["duet", "next"]));
+  assert.equal(limitNext.warning, "max_iterations_reached");
+  assert.equal(limitNext.allowedToAct, false);
+  assert.deepEqual(limitNext.nextActions.act, []);
+  assert.equal(limitNext.lastVerifier.status, "ok");
+  assert.equal(limitNext.lastVerifier.agent, "codex");
+  assert.equal(limitNext.lastVerifier.verifier, "verify with space.mjs");
+
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--status", "done", "--handoff", "handoff.md"]));
+  const doneNext = ok(runBridge(dir, ["duet", "next", "--agent", "codex"]));
+  assert.equal(doneNext.status, "done");
+  assert.equal(doneNext.allowedToAct, false);
+  assert.equal(doneNext.warning, "done");
+  assert.deepEqual(doneNext.nextActions.act, []);
+});
+
+test("duet packet export is a redacted projection by default and supports raw local output", (t) => {
+  const dir = sandbox(t);
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-packet-outside-"));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  const secret = "SECRET_PACKET_EXPORT_123";
+  writeFile(dir, "goal.md", `Packet goal ${secret}`);
+  writeFile(dir, "handoff.md", `Packet handoff ${secret}`);
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex"]));
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
+
+  const redacted = ok(runBridge(dir, ["duet", "packet", "export", "--agent", "minimax"]));
+  assert.equal(redacted.event, "duet-packet-export");
+  assert.equal(redacted.raw, false);
+  assert.equal(redacted.agent, "minimax");
+  assert.equal(redacted.allowedToAct, true);
+  assert.equal(redacted.projection.runtimeArtifact, false);
+  assert.equal(redacted.projection.separateStateSchema, false);
+  assert.equal(redacted.packet.overBudget, false);
+  assert.doesNotMatch(JSON.stringify(redacted), new RegExp(secret));
+
+  const out = ok(runBridge(dir, [
+    "duet",
+    "packet",
+    "export",
+    "--agent",
+    "minimax",
+    "--format",
+    "markdown",
+    "--raw",
+    "--out",
+    "duet-packet.local.md",
+  ]));
+  assert.equal(out.event, "duet-packet-export");
+  assert.equal(out.raw, true);
+  const markdown = fs.readFileSync(path.join(dir, "duet-packet.local.md"), "utf8");
+  assert.match(markdown, /# Duet Packet/);
+  assert.match(markdown, new RegExp(secret));
+
+  fails(
+    runBridge(dir, ["duet", "packet", "export", "--agent", "minimax", "--raw", "--out", "duet-packet.md"]),
+    /--raw --out requires a \.local\.\* output path/,
+  );
+  fails(
+    runBridge(dir, ["duet", "packet", "export", "--agent", "minimax", "--out", path.join(other, "packet.local.json")]),
+    /--out path escapes bridge root/,
+  );
+});
+
+test("duet packet export validates agent and marks truncation visibly", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", `Long goal ${"x".repeat(3000)}`);
+  writeFile(dir, "handoff.md", `Long handoff ${"y".repeat(3000)}`);
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex"]));
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
+
+  fails(
+    runBridge(dir, ["duet", "packet", "export", "--agent", "codex"]),
+    /--agent minimax is the only supported packet export target/,
+  );
+  const rawJson = ok(runBridge(dir, [
+    "duet",
+    "packet",
+    "export",
+    "--agent",
+    "minimax",
+    "--raw",
+    "--max-packet-chars",
+    "1000",
+  ]));
+  assert.equal(rawJson.raw, true);
+  assert.equal(rawJson.state.goal.text, undefined);
+  assert.equal(rawJson.goal.truncated, true);
+  assert.match(rawJson.goal.text, /\[truncated: packet character budget reached\]/);
+
+  const packet = runBridge(dir, [
+    "duet",
+    "packet",
+    "export",
+    "--agent",
+    "minimax",
+    "--format",
+    "markdown",
+    "--raw",
+    "--max-packet-chars",
+    "1000",
+  ]);
+  assert.equal(packet.status, 0, packet.text);
+  assert.match(packet.stdout, /\[truncated: packet character budget reached\]/);
+});
+
+test("duet step minimax dry-run validates baton, estimates prompt, and spends no tokens", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_STEP_DRY_RUN_123";
+  writeFile(dir, "goal.md", `Step goal ${secret}`);
+  writeFile(dir, "handoff.md", `Step handoff ${secret}`);
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "3"]));
+  fails(runBridge(dir, ["duet", "step", "--agent", "minimax", "--dry-run"]), /baton is held by codex/);
+  fails(runBridge(dir, ["duet", "step", "--agent", "minimax", "--yes"]), /--yes is not implemented/);
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
+
+  const ledgerBefore = fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8");
+  const stateBefore = fs.readFileSync(path.join(dir, "duet-state.json"), "utf8");
+  const journalBefore = fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8");
+  const dryRun = ok(runBridge(dir, ["duet", "step", "--agent", "minimax", "--dry-run"]));
+  assert.equal(dryRun.event, "duet-step-dry-run");
+  assert.equal(dryRun.agent, "minimax");
+  assert.equal(dryRun.mode, "review-only");
+  assert.equal(dryRun.tokenSpending, false);
+  assert.equal(dryRun.wouldCallModel, true);
+  assert.equal(dryRun.liveCallAllowed, true);
+  assert.equal(dryRun.route.provider, "minimax");
+  assert.equal(dryRun.warning, null);
+  assert.deepEqual(dryRun.warnings, []);
+  assert.equal(dryRun.packet.rawSha256, undefined);
+  assert.equal(dryRun.packet.rawChars, undefined);
+  assert.equal(typeof dryRun.packet.redactedSha256, "string");
+  assert.equal(typeof dryRun.packet.redactedPreview, "string");
+  assert.equal(dryRun.prompt.withinBudget, true);
+  assert.equal(dryRun.prompt.sha256, undefined);
+  assert.equal(dryRun.prompt.chars, undefined);
+  assert.equal(dryRun.prompt.text, undefined);
+  assert.doesNotMatch(JSON.stringify(dryRun), new RegExp(secret));
+  assert.equal(fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8"), ledgerBefore);
+  assert.equal(fs.readFileSync(path.join(dir, "duet-state.json"), "utf8"), stateBefore);
+  assert.equal(fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8"), journalBefore);
+
+  const raw = ok(runBridge(dir, ["duet", "step", "--agent", "minimax", "--dry-run", "--raw"]));
+  assert.equal(typeof raw.packet.rawSha256, "string");
+  assert.equal(typeof raw.packet.rawChars, "number");
+  assert.equal(typeof raw.prompt.sha256, "string");
+  assert.equal(typeof raw.prompt.chars, "number");
+  assert.match(raw.prompt.text, new RegExp(secret));
+});
+
+test("duet step minimax dry-run rejects terminal and max-iteration states", (t) => {
+  const emptyHandoffDir = sandbox(t);
+  writeFile(emptyHandoffDir, "goal.md", "Initial minimax step goal");
+  ok(runBridge(emptyHandoffDir, ["duet", "init", "--goal", "goal.md", "--baton", "minimax", "--max-iterations", "3"]));
+  const initialDryRun = ok(runBridge(emptyHandoffDir, ["duet", "step", "--agent", "minimax", "--dry-run"]));
+  assert.equal(initialDryRun.warning, "missing_last_handoff");
+  assert.deepEqual(initialDryRun.warnings, ["missing_last_handoff"]);
+
+  const doneDir = sandbox(t);
+  writeFile(doneDir, "goal.md", "Done step goal");
+  writeFile(doneDir, "handoff.md", "Done step handoff");
+  ok(runBridge(doneDir, ["duet", "init", "--goal", "goal.md", "--baton", "minimax", "--max-iterations", "3"]));
+  ok(runBridge(doneDir, ["duet", "pass", "--from", "minimax", "--status", "done", "--handoff", "handoff.md"]));
+  fails(runBridge(doneDir, ["duet", "step", "--agent", "minimax", "--dry-run"]), /requires running status/);
+
+  const limitDir = sandbox(t);
+  writeFile(limitDir, "goal.md", "Limit step goal");
+  ok(runBridge(limitDir, ["duet", "init", "--goal", "goal.md", "--baton", "minimax", "--max-iterations", "1"]));
+  fails(runBridge(limitDir, ["duet", "step", "--agent", "minimax", "--dry-run"]), /maxIterations reached/);
+});
+
 test("raw mutating duet commands expose local text only when explicitly requested", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_RAW_MUTATION_456";
@@ -339,6 +553,30 @@ test("duet rejects wrong baton and invalid agent names", (t) => {
   fails(runBridge(dir, ["duet", "note", "--agent", "someone", "--note", "note.md"]), /--agent must be one of/);
 });
 
+test("duet pass validates handoff path boundaries and file type", (t) => {
+  const dir = sandbox(t);
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-handoff-outside-"));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  writeFile(dir, "goal.md", "Path boundary goal");
+  writeFile(dir, "handoff.md", "Valid handoff");
+  fs.mkdirSync(path.join(dir, "handoff-dir"));
+  writeFile(other, "outside.md", "Outside handoff");
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md"]));
+
+  fails(
+    runBridge(dir, ["duet", "pass", "--from", "codex", "--handoff", path.join(other, "outside.md")]),
+    /--handoff path escapes bridge root/,
+  );
+  fails(
+    runBridge(dir, ["duet", "pass", "--from", "codex", "--handoff", "handoff-dir"]),
+    /--handoff is not a regular file/,
+  );
+
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
+  assert.equal(readJson(dir, "duet-state.json").baton, "minimax");
+});
+
 test("duet validates bad inputs and damaged runtime state", (t) => {
   const dir = sandbox(t);
   writeFile(dir, "goal.md", "Validation goal");
@@ -350,6 +588,7 @@ test("duet validates bad inputs and damaged runtime state", (t) => {
 
   ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--max-iterations", "2"]));
   fails(runBridge(dir, ["duet", "init", "--goal", "goal.md"]), /already exists/);
+  fails(runBridge(dir, ["duet", "pass", "--from", "codex", "--handoff", "too-large.md"]), /--handoff file is too large/);
 
   fs.writeFileSync(
     path.join(dir, "duet-state.json"),

@@ -46,6 +46,7 @@ function defaultConfig() {
     maxLongPromptRepeats: 3,
     askSourceContextMode: "auto",
     askMaxSourceContextChars: 24000,
+    duetPacketMaxChars: 60000,
     asciiConsole: true,
     denySessions: [],
     env: {
@@ -143,6 +144,9 @@ function usage() {
   node .\\bridge.mjs mvs-send --content <text> --allow-inline-content --yes [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
+  node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
+  node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
+  node .\\bridge.mjs duet step --agent minimax --dry-run [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
@@ -1406,6 +1410,7 @@ function publicConfigSummary() {
     maxLongPromptRepeats: config.maxLongPromptRepeats,
     askSourceContextMode: config.askSourceContextMode,
     askMaxSourceContextChars: config.askMaxSourceContextChars,
+    duetPacketMaxChars: config.duetPacketMaxChars,
     asciiConsole: config.asciiConsole,
     denySessionsCount: config.denySessions.length,
     mode: modeState(),
@@ -1450,6 +1455,7 @@ function setConfigKey(key, value) {
     "maxLongPromptRepeats",
     "askSourceContextMode",
     "askMaxSourceContextChars",
+    "duetPacketMaxChars",
     "asciiConsole",
   ]);
   const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };
@@ -1487,6 +1493,7 @@ function validateConfig(configObject) {
   validateNumberRange(configObject, "maxLongPromptChars", 100, 1000000);
   validateNumberRange(configObject, "maxLongPromptRepeats", 1, 10);
   validateNumberRange(configObject, "askMaxSourceContextChars", 0, 200000);
+  validateNumberRange(configObject, "duetPacketMaxChars", 1000, 1000000);
   if (!["auto", "off"].includes(String(configObject.askSourceContextMode || "auto"))) {
     throw new Error("askSourceContextMode must be auto or off");
   }
@@ -2257,6 +2264,25 @@ function readRequiredText(filePath, label, maxChars = null) {
   return text;
 }
 
+function readDuetHandoffText(filePath) {
+  if (!filePath) throw new Error("--handoff is required");
+  if (String(filePath).includes("\0")) throw new Error("--handoff must not contain NUL bytes");
+  const resolved = path.resolve(process.cwd(), filePath);
+  if (!fs.existsSync(resolved)) throw new Error(`--handoff file not found: ${resolved}`);
+  const realPath = realpathOrResolve(resolved);
+  if (!isPathInsideRoot(bridgeDir, realPath)) {
+    throw new Error(`--handoff path escapes bridge root: ${resolved}`);
+  }
+  const stats = fs.statSync(realPath);
+  if (!stats.isFile()) throw new Error(`--handoff is not a regular file: ${realPath}`);
+  const text = fs.readFileSync(realPath, "utf8").trim();
+  if (!text) throw new Error(`--handoff file is empty: ${realPath}`);
+  if (text.length > duetMaxEntryChars) {
+    throw new Error(`--handoff file is too large (${text.length} chars); keep duet entries <= ${duetMaxEntryChars} chars`);
+  }
+  return text;
+}
+
 function writeTextAtomic(filePath, text) {
   const tempPath = `${filePath}.${process.pid}.tmp`;
   fs.writeFileSync(tempPath, text, "utf8");
@@ -2358,6 +2384,20 @@ function requireSafeRawOutputPath(outPath) {
   throw new Error("--raw --out requires a .local.* output path");
 }
 
+function resolveDuetOutputPath(outPathArg, raw) {
+  if (!outPathArg) return null;
+  if (String(outPathArg).includes("\0")) throw new Error("--out must not contain NUL bytes");
+  const resolved = path.resolve(process.cwd(), outPathArg);
+  if (raw) requireSafeRawOutputPath(resolved);
+  const parent = path.dirname(resolved);
+  if (!fs.existsSync(parent)) throw new Error(`--out parent directory not found: ${parent}`);
+  const realParent = realpathOrResolve(parent);
+  if (!isPathInsideRoot(bridgeDir, realParent)) {
+    throw new Error(`--out path escapes bridge root: ${resolved}`);
+  }
+  return path.join(realParent, path.basename(resolved));
+}
+
 function safeLedgerEvent(event) {
   return {
     ts: event.ts || null,
@@ -2398,7 +2438,7 @@ function duetTranscriptExport(args) {
     statePath: duetStatePath,
     journalPath: duetJournalPath,
     ledgerPath: args.includes("--include-ledger") ? ledgerPath : null,
-    state: raw ? state : publicDuetState(state),
+    state: publicDuetState(state),
     journal: raw
       ? { ...textSummary(journal), text: journal }
       : { ...textSummary(journal), tail: textSummary(tailLines(journal, journalLines)), tailLines: journalLines },
@@ -2468,6 +2508,377 @@ function printDuetEvent(event, state, args, extra = {}) {
     raw,
     ...extra,
     state: raw ? state : publicDuetState(state),
+  });
+}
+
+function lastDuetVerifierSummary(journal) {
+  const pattern = /^## Verify - (codex|minimax) - ([^\r\n]+)\r?\n\r?\nstatus=([^\s]+) exit=([^\s]+) durationMs=([^\s]+) verifier=(.+) sha=([^\s]+)$/gm;
+  let latest = null;
+  let match;
+  while ((match = pattern.exec(journal)) !== null) {
+    latest = {
+      agent: match[1],
+      endedAt: match[2],
+      status: match[3],
+      exit: match[4] === "null" ? null : match[4],
+      durationMs: Number(match[5]),
+      verifier: match[6],
+      sha: match[7],
+    };
+  }
+  return latest;
+}
+
+function duetNextWarnings(state, requestedAgent) {
+  const warnings = [];
+  if (state.status === "done") warnings.push("done");
+  if (state.status === "human_escalation") warnings.push("human_escalation");
+  if (state.status === "running" && state.iteration >= state.maxIterations) warnings.push("max_iterations_reached");
+  if (state.status === "running" && requestedAgent && requestedAgent !== state.baton) warnings.push("wrong_baton");
+  return warnings;
+}
+
+function canDuetAgentAct(state, agent) {
+  return state.status === "running"
+    && agent === state.baton
+    && state.iteration < state.maxIterations;
+}
+
+function duetNextActions(state, requestedAgent, allowedToAct) {
+  const inspect = [
+    "node .\\bridge.mjs duet show",
+    "node .\\bridge.mjs duet transcript export",
+  ];
+  if (state.status !== "running") {
+    return { inspect, act: [], recover: [] };
+  }
+  const recover = allowedToAct
+    ? []
+    : [
+      `node .\\bridge.mjs duet pass --from ${state.baton} --to ${requestedAgent || nextDuetAgent(state.baton)} --handoff <file>`,
+    ];
+  const act = allowedToAct
+    ? [
+      `node .\\bridge.mjs duet pass --from ${requestedAgent} --to ${nextDuetAgent(requestedAgent)} --handoff <file>`,
+      `node .\\bridge.mjs duet pass --from ${requestedAgent} --status done --handoff <file>`,
+      `node .\\bridge.mjs duet pass --from ${requestedAgent} --status human_escalation --handoff <file>`,
+    ]
+    : [];
+  return { inspect, act, recover };
+}
+
+function duetNextCommand(args) {
+  const state = readDuetState();
+  const journal = readDuetJournal();
+  const requestedAgentRaw = argValue(args, "--agent", state.status === "running" ? state.baton : null);
+  const requestedAgent = requestedAgentRaw ? requireDuetAgent(requestedAgentRaw, "--agent") : null;
+  const raw = args.includes("--raw");
+  const allowedToAct = canDuetAgentAct(state, requestedAgent);
+  const warnings = duetNextWarnings(state, requestedAgent);
+  printJson({
+    event: "duet-next",
+    statePath: duetStatePath,
+    journalPath: duetJournalPath,
+    raw,
+    agent: requestedAgent,
+    baton: state.baton,
+    status: state.status,
+    allowedToAct,
+    warning: warnings[0] || null,
+    warnings,
+    nextActions: duetNextActions(state, requestedAgent, allowedToAct),
+    lastVerifier: lastDuetVerifierSummary(journal),
+    state: raw ? state : publicDuetState(state),
+    journal: raw ? { ...textSummary(journal), tail: tailLines(journal, 80) } : textSummary(journal),
+  });
+}
+
+function truncatePacketText(text, limit) {
+  const marker = "\n[truncated: packet character budget reached]";
+  if (text.length <= limit) return { text, truncated: false };
+  const keep = Math.max(0, limit - marker.length);
+  return { text: `${text.slice(0, keep)}${marker}`, truncated: true };
+}
+
+function packetTextField(text, raw, limit) {
+  if (!raw) return textSummary(text);
+  const truncated = truncatePacketText(text, limit);
+  return {
+    ...textSummary(text),
+    text: truncated.text,
+    truncated: truncated.truncated,
+  };
+}
+
+function buildDuetPacketPayload(agent, raw, textLimit) {
+  const state = readDuetState();
+  const journal = readDuetJournal();
+  const allowedToAct = canDuetAgentAct(state, agent);
+  const warnings = duetNextWarnings(state, agent);
+  const journalTail = tailLines(journal, 120);
+  return {
+    event: "duet-packet-export",
+    generatedAt: now(),
+    raw,
+    agent,
+    projection: {
+      source: "duet-state.json + duet-journal.md",
+      runtimeArtifact: false,
+      separateStateSchema: false,
+    },
+    statePath: duetStatePath,
+    journalPath: duetJournalPath,
+    status: state.status,
+    baton: state.baton,
+    allowedToAct,
+    warning: warnings[0] || null,
+    warnings,
+    nextActions: duetNextActions(state, agent, allowedToAct),
+    allowedCompletionStatuses: ["running", "done", "human_escalation"],
+    lastVerifier: lastDuetVerifierSummary(journal),
+    state: raw ? state : publicDuetState(state),
+    goal: packetTextField(state.goal, raw, textLimit),
+    lastHandoff: state.lastHandoff ? packetTextField(state.lastHandoff, raw, textLimit) : null,
+    journal: raw
+      ? packetTextField(journalTail, raw, textLimit)
+      : { ...textSummary(journal), tail: textSummary(journalTail), tailLines: 120 },
+  };
+}
+
+function renderDuetPacketMarkdown(payload) {
+  const lines = [
+    "# Duet Packet",
+    "",
+    `Generated: ${payload.generatedAt}`,
+    `Raw: ${payload.raw}`,
+    `Agent: ${payload.agent}`,
+    `Status: ${payload.status}`,
+    `Baton: ${payload.baton ?? "none"}`,
+    `Allowed to act: ${payload.allowedToAct}`,
+    `Warnings: ${payload.warnings.length ? payload.warnings.join(", ") : "none"}`,
+    "",
+    "## Projection",
+    "",
+    "- Derived from `duet-state.json` and `duet-journal.md`.",
+    "- Not a runtime artifact.",
+    "- No separate state schema.",
+    "",
+    "## Next Actions",
+    "",
+    "```json",
+    JSON.stringify(payload.nextActions, null, 2),
+    "```",
+    "",
+    "## Goal",
+    "",
+  ];
+  if (payload.raw) {
+    lines.push(payload.goal.text);
+  } else {
+    lines.push("```json", JSON.stringify(payload.goal, null, 2), "```");
+  }
+  lines.push("", "## Last Handoff", "");
+  if (!payload.lastHandoff) {
+    lines.push("None");
+  } else if (payload.raw) {
+    lines.push(payload.lastHandoff.text);
+  } else {
+    lines.push("```json", JSON.stringify(payload.lastHandoff, null, 2), "```");
+  }
+  lines.push("", "## Latest Verifier", "", "```json", JSON.stringify(payload.lastVerifier, null, 2), "```", "", "## Journal", "");
+  if (payload.raw) {
+    lines.push(payload.journal.text);
+  } else {
+    lines.push("```json", JSON.stringify(payload.journal, null, 2), "```");
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+function renderDuetPacket(payload, format) {
+  return format === "json" ? stableStringify(payload) : renderDuetPacketMarkdown(payload);
+}
+
+function createBoundedDuetPacket(agent, raw, format, maxPacketChars) {
+  let textLimit = Math.max(80, Math.floor(maxPacketChars / 4));
+  const finalize = (payload) => {
+    const firstPass = {
+      ...payload,
+      packet: {
+        maxChars: maxPacketChars,
+        renderedChars: null,
+        overBudget: null,
+      },
+    };
+    const rendered = renderDuetPacket(firstPass, format);
+    let finalPayload = {
+      ...firstPass,
+      packet: {
+        ...firstPass.packet,
+        renderedChars: rendered.length,
+        overBudget: rendered.length > maxPacketChars,
+      },
+    };
+    let finalRendered = renderDuetPacket(finalPayload, format);
+    finalPayload = {
+      ...finalPayload,
+      packet: {
+        ...finalPayload.packet,
+        renderedChars: finalRendered.length,
+        overBudget: finalRendered.length > maxPacketChars,
+      },
+    };
+    finalRendered = renderDuetPacket(finalPayload, format);
+    return { payload: finalPayload, rendered: finalRendered };
+  };
+  let packet = finalize(buildDuetPacketPayload(agent, raw, textLimit));
+  while (packet.rendered.length > maxPacketChars && textLimit > 80) {
+    textLimit = Math.max(80, Math.floor(textLimit * 0.65));
+    packet = finalize(buildDuetPacketPayload(agent, raw, textLimit));
+  }
+  return packet;
+}
+
+function duetPacketExport(args) {
+  const action = args[0];
+  if (action !== "export") throw new Error("unknown duet packet command; expected `duet packet export`");
+  const rest = args.slice(1);
+  const format = argValue(rest, "--format", "json");
+  if (!["json", "markdown"].includes(format)) throw new Error("--format must be json or markdown");
+  const raw = rest.includes("--raw");
+  const agent = requireDuetAgent(argValue(rest, "--agent"), "--agent");
+  if (agent !== "minimax") throw new Error("--agent minimax is the only supported packet export target in Phase 4A");
+  const configuredMax = Number(config.duetPacketMaxChars || 60000);
+  const maxPacketChars = positiveIntegerArg(rest, "--max-packet-chars", String(configuredMax));
+  const maxLongPromptChars = Number(config.maxLongPromptChars || 160000);
+  if (maxPacketChars > maxLongPromptChars) {
+    throw new Error(`--max-packet-chars must be <= maxLongPromptChars=${maxLongPromptChars}`);
+  }
+  const outPath = resolveDuetOutputPath(argValue(rest, "--out", null), raw);
+  const packet = createBoundedDuetPacket(agent, raw, format, maxPacketChars);
+  const rendered = packet.rendered;
+  if (outPath) {
+    fs.writeFileSync(outPath, rendered, "utf8");
+    return printJson({
+      event: "duet-packet-export",
+      raw,
+      format,
+      agent,
+      outPath,
+      chars: rendered.length,
+      sha256: textDigest(rendered),
+      overBudget: packet.payload.packet.overBudget,
+    });
+  }
+  process.stdout.write(config.asciiConsole === false ? rendered : escapeNonAscii(rendered));
+}
+
+function oneLinePreview(text, limit = 200) {
+  return String(text || "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function duetStepReviewPrompt(packetText) {
+  return [
+    "Review only. Do not edit files. Answer with a compact Duet handoff.",
+    "",
+    "You are MiniMax participating in Mavis MiniMax Bridge Duet Relay.",
+    "Use the packet below to review, continue reasoning, identify risks, and propose the next useful handoff.",
+    "Do not claim that you executed local commands unless the packet says they were executed.",
+    "Do not ask the human to approve routine continuation; escalate only for a real human decision.",
+    "",
+    "Return a concise handoff with one of these statuses as plain text: running, done, human_escalation.",
+    "",
+    "## Duet Packet",
+    "",
+    packetText,
+  ].join("\n");
+}
+
+function assertDuetStepPreconditions(state, agent) {
+  if (state.status !== "running") {
+    throw new Error(`duet step requires running status; current status is ${state.status}`);
+  }
+  if (state.iteration >= state.maxIterations) {
+    throw new Error(`duet step refused: maxIterations reached (${state.iteration}/${state.maxIterations})`);
+  }
+  if (state.baton !== agent) {
+    throw new Error(`duet step refused: baton is held by ${state.baton}`);
+  }
+}
+
+function duetStepDryRun(args) {
+  const raw = args.includes("--raw");
+  if (!args.includes("--dry-run")) {
+    if (args.includes("--yes")) throw new Error("duet step --yes is not implemented in Phase 4B.1; use --dry-run");
+    throw new Error("duet step requires --dry-run in Phase 4B.1");
+  }
+  const agent = requireDuetAgent(argValue(args, "--agent"), "--agent");
+  if (agent !== "minimax") throw new Error("--agent minimax is the only supported duet step target in Phase 4B.1");
+  const state = readDuetState();
+  readDuetJournal();
+  assertDuetStepPreconditions(state, agent);
+  const configuredMax = Number(config.duetPacketMaxChars || 60000);
+  const maxPacketChars = positiveIntegerArg(args, "--max-packet-chars", String(configuredMax));
+  const maxLongPromptChars = Number(config.maxLongPromptChars || 160000);
+  if (maxPacketChars > maxLongPromptChars) {
+    throw new Error(`--max-packet-chars must be <= maxLongPromptChars=${maxLongPromptChars}`);
+  }
+  const rawPacket = createBoundedDuetPacket(agent, true, "markdown", maxPacketChars);
+  const redactedPacket = createBoundedDuetPacket(agent, false, "json", maxPacketChars);
+  const promptText = duetStepReviewPrompt(rawPacket.rendered);
+  const promptWithOptimizationContext = addOptimizationContext(promptText, { role: "main" });
+  const estimatedInputTokens = estimateInputTokensForText(promptWithOptimizationContext);
+  const maxInputTokens = Number(config.maxInputTokens || 200000);
+  const route = requiredModel();
+  const dryRunWarnings = state.lastHandoff ? [] : ["missing_last_handoff"];
+  const packetDetails = raw
+    ? {
+      maxChars: maxPacketChars,
+      rawChars: rawPacket.rendered.length,
+      rawSha256: textDigest(rawPacket.rendered),
+      rawOverBudget: rawPacket.payload.packet.overBudget,
+      redactedChars: redactedPacket.rendered.length,
+      redactedSha256: textDigest(redactedPacket.rendered),
+      redactedPreview: oneLinePreview(redactedPacket.rendered),
+    }
+    : {
+      maxChars: maxPacketChars,
+      redactedChars: redactedPacket.rendered.length,
+      redactedSha256: textDigest(redactedPacket.rendered),
+      redactedPreview: oneLinePreview(redactedPacket.rendered),
+    };
+  const promptDetails = raw
+    ? {
+      chars: promptText.length,
+      sha256: textDigest(promptText),
+      estimatedInputTokens,
+      maxInputTokens,
+      withinBudget: estimatedInputTokens <= maxInputTokens,
+      text: promptText,
+    }
+    : {
+      estimatedInputTokens,
+      maxInputTokens,
+      withinBudget: estimatedInputTokens <= maxInputTokens,
+    };
+  printJson({
+    event: "duet-step-dry-run",
+    agent,
+    mode: "review-only",
+    tokenSpending: false,
+    wouldCallModel: true,
+    liveCallAllowed: estimatedInputTokens <= maxInputTokens,
+    raw,
+    warning: dryRunWarnings[0] || null,
+    warnings: dryRunWarnings,
+    route: {
+      provider: providerFromModel(route),
+      model: route,
+      outputCapTokens: roleOutputCap("main"),
+    },
+    packet: packetDetails,
+    prompt: promptDetails,
+    state: publicDuetState(state),
   });
 }
 
@@ -2797,7 +3208,7 @@ function duetPassCommand(args) {
     : argValue(args, "--to", null);
   if (to) requireDuetAgent(to, "--to");
 
-  const handoff = readRequiredText(argValue(args, "--handoff"), "--handoff", duetMaxEntryChars);
+  const handoff = readDuetHandoffText(argValue(args, "--handoff"));
   let nextIteration = state.iteration;
   let nextStatus = status;
   let humanEscalation = status === "human_escalation" ? handoff : state.humanEscalation;
@@ -2846,6 +3257,9 @@ async function duetCommand(args) {
     console.log(`Usage:
   node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
+  node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
+  node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
+  node .\\bridge.mjs duet step --agent minimax --dry-run [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
@@ -2854,6 +3268,9 @@ async function duetCommand(args) {
   }
   if (subcommand === "init") return withDuetLock(() => duetInitCommand(rest));
   if (subcommand === "show") return duetShowCommand(rest);
+  if (subcommand === "next") return duetNextCommand(rest);
+  if (subcommand === "packet") return duetPacketExport(rest);
+  if (subcommand === "step") return duetStepDryRun(rest);
   if (subcommand === "transcript") {
     const [action, ...actionRest] = rest;
     if (action === "export") return duetTranscriptExport(actionRest);

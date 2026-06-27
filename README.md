@@ -234,6 +234,8 @@ Inspect the relay:
 
 ```powershell
 node .\bridge.mjs duet show
+node .\bridge.mjs duet next
+node .\bridge.mjs duet next --agent minimax
 ```
 
 By default, duet commands redact the goal, handoff, escalation text, and journal
@@ -253,6 +255,32 @@ node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcri
 
 Raw transcript exports require explicit `--raw`; raw file output must use a
 `.local.*` path.
+
+`duet next` is local-only and redacted by default. It reports baton ownership,
+whether the requested agent may act, terminal or wrong-baton warnings, static
+next-action hints, and the latest recorded verifier summary.
+
+Export a derived packet projection for MiniMax:
+
+```powershell
+node .\bridge.mjs duet packet export --agent minimax
+node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\duet-packet.local.md
+```
+
+`duet packet export` is local-only and redacted by default. Packets are derived
+from `duet-state.json` and `duet-journal.md`; they are not runtime state. Raw
+packet output requires explicit `--raw`, and raw file output must use a
+`.local.*` path inside the bridge root.
+
+Preview a future MiniMax step without spending tokens:
+
+```powershell
+node .\bridge.mjs duet step --agent minimax --dry-run
+```
+
+`duet step --agent minimax --dry-run` validates relay status, baton ownership,
+iteration limits, packet size, route/model, and estimated input tokens. It does
+not call MiniMax, write a model handoff, or advance the baton.
 
 Run a local verifier through the bridge:
 
@@ -293,6 +321,7 @@ Operational rules:
 - `duet-journal.md` stores compact conclusions and handoffs.
 - `duet.lock` prevents overlapping mutating commands from racing.
 - Goal, handoff, and note files are limited to 20000 characters each.
+- `duet pass --handoff` accepts only regular files inside the bridge root.
 - `--max-iterations` is a safety limit; when reached, the relay stops with
   `human_escalation`.
 - Duet commands are local-only and do not call MiniMax. Sending work to MiniMax
@@ -346,6 +375,9 @@ node .\bridge.mjs mvs-messages --session mvs_<id> --limit 5
 node .\bridge.mjs mvs-send --session mvs_<id> --task path\to\task.md --yes
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
+node .\bridge.mjs duet next
+node .\bridge.mjs duet packet export --agent minimax
+node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier .\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md

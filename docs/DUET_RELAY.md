@@ -130,6 +130,38 @@ By default this redacts relay content and prints sizes/hashes. Use
 `duet show --raw` only when you intentionally need local goal, handoff, or
 journal text in stdout.
 
+Check who should act next:
+
+```powershell
+node .\bridge.mjs duet next
+node .\bridge.mjs duet next --agent codex
+node .\bridge.mjs duet next --agent minimax
+```
+
+`duet next` is local-only and redacted by default. It reports whether the
+requested agent may act, terminal or wrong-baton warnings, static next-action
+hints, and the latest recorded verifier summary.
+
+Export a derived MiniMax packet projection:
+
+```powershell
+node .\bridge.mjs duet packet export --agent minimax
+node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\duet-packet.local.md
+```
+
+Packets are derived views of relay state and journal content. They are not a
+new runtime artifact or state schema.
+
+Preview a future MiniMax step without spending tokens:
+
+```powershell
+node .\bridge.mjs duet step --agent minimax --dry-run
+```
+
+The dry run validates baton ownership, status, iteration limits, packet size,
+route/model, and estimated input tokens. It does not call MiniMax or advance the
+relay.
+
 Pass the baton after a turn:
 
 ```powershell
@@ -150,6 +182,7 @@ node .\bridge.mjs duet note --agent codex --note .\note.local.md
 ```
 
 Goal, handoff, and note files are limited to 20000 characters each. The relay is
-for compact handoffs, not archival dumps.
+for compact handoffs, not archival dumps. `duet pass --handoff` accepts only
+regular files inside the bridge root.
 
 These commands are local-only. They do not call MiniMax and do not spend tokens. Sending work to MiniMax remains an explicit separate step through `ask` or `mvs-send`.
