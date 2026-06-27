@@ -350,16 +350,31 @@ function readUntrackedSnippet(repoRoot, relativePath, perFileLimit) {
   if (!fullPath.startsWith(rootWithSep)) {
     return `### ${relativePath}\n\n[skipped: path escapes repository root]`;
   }
-  if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+  if (!fs.existsSync(fullPath)) {
     return `### ${relativePath}\n\n[skipped: not a regular file]`;
   }
-  const buffer = fs.readFileSync(fullPath);
-  if (!isProbablyText(buffer)) {
-    return `### ${relativePath}\n\n[skipped: binary-looking file, ${buffer.length} bytes]`;
+  const stats = fs.statSync(fullPath);
+  if (!stats.isFile()) {
+    return `### ${relativePath}\n\n[skipped: not a regular file]`;
   }
-  const text = buffer.toString("utf8");
-  const truncated = text.length > perFileLimit;
-  const body = truncated ? `${text.slice(0, perFileLimit)}\n\n[truncated: file is ${text.length} chars]` : text;
+
+  const maxBytes = Math.max(4096, perFileLimit * 4);
+  const bytesToRead = Math.min(stats.size, maxBytes);
+  const buffer = Buffer.allocUnsafe(bytesToRead);
+  let bytesRead = 0;
+  const fd = fs.openSync(fullPath, "r");
+  try {
+    bytesRead = fs.readSync(fd, buffer, 0, bytesToRead, 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const prefix = buffer.subarray(0, bytesRead);
+  if (!isProbablyText(prefix)) {
+    return `### ${relativePath}\n\n[skipped: binary-looking file, ${stats.size} bytes]`;
+  }
+  const text = prefix.toString("utf8");
+  const truncated = stats.size > bytesRead || text.length > perFileLimit;
+  const body = truncated ? `${text.slice(0, perFileLimit)}\n\n[truncated: file is ${stats.size} bytes]` : text;
   return `### ${relativePath}\n\n\`\`\`\n${body}\n\`\`\``;
 }
 

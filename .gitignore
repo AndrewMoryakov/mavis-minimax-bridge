@@ -8,6 +8,7 @@
 /duet-state.json.*.tmp
 /duet-journal.md.*.tmp
 *.local.*
+/live-smoke-*/
 /examples/duet-simple-orders/answer.json
 /examples/duet-tetris-browser/index.html
 /examples/duet-tetris-browser/styles.css

@@ -332,6 +332,7 @@ test("runtime files, duet temp files, and local scratch files are git-ignored", 
     "duet-state.json.123.tmp",
     "duet-journal.md.123.tmp",
     "handoff.local.md",
+    "live-smoke-tetris-zero-20260627/index.html",
   ];
 
   for (const sample of samples) {
