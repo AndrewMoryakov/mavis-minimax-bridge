@@ -80,6 +80,26 @@ test("duet lifecycle redacts by default and exposes text only with --raw", (t) =
   assert.match(JSON.stringify(rawShow), new RegExp(secret));
 });
 
+test("raw mutating duet commands expose local text only when explicitly requested", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_RAW_MUTATION_456";
+  writeFile(dir, "goal.md", `Goal ${secret}`);
+  writeFile(dir, "handoff.md", `Handoff ${secret}`);
+  writeFile(dir, "note.md", `Note ${secret}`);
+
+  const init = ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--raw"]));
+  assert.equal(init.raw, true);
+  assert.match(JSON.stringify(init), new RegExp(secret));
+
+  const pass = ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md", "--raw"]));
+  assert.equal(pass.raw, true);
+  assert.match(JSON.stringify(pass), new RegExp(secret));
+
+  const note = ok(runBridge(dir, ["duet", "note", "--agent", "minimax", "--note", "note.md", "--raw"]));
+  assert.equal(note.raw, true);
+  assert.match(JSON.stringify(note), new RegExp(secret));
+});
+
 test("duet done state blocks further passes without --force", (t) => {
   const dir = sandbox(t);
   writeFile(dir, "goal.md", "Finishable goal");
@@ -98,6 +118,25 @@ test("duet done state blocks further passes without --force", (t) => {
   );
 });
 
+test("duet explicit human escalation stores the handoff and blocks further passes", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Escalation goal");
+  writeFile(dir, "handoff.md", "Need human decision");
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "3"]));
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--status", "human_escalation", "--handoff", "handoff.md"]));
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.status, "human_escalation");
+  assert.equal(state.baton, null);
+  assert.equal(state.humanEscalation, "Need human decision");
+
+  fails(
+    runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]),
+    /duet status is human_escalation/,
+  );
+});
+
 test("maxIterations stops relay without incrementing past the limit", (t) => {
   const dir = sandbox(t);
   writeFile(dir, "goal.md", "Limit goal");
@@ -112,6 +151,20 @@ test("maxIterations stops relay without incrementing past the limit", (t) => {
   assert.equal(state.maxIterations, 1);
   assert.equal(state.baton, null);
   assert.equal(state.humanEscalation, "maxIterations reached (1)");
+});
+
+test("duet rejects wrong baton and invalid agent names", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Baton goal");
+  writeFile(dir, "handoff.md", "Baton handoff");
+  writeFile(dir, "note.md", "Baton note");
+
+  fails(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "someone"]), /--baton must be one of/);
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex"]));
+
+  fails(runBridge(dir, ["duet", "pass", "--from", "minimax", "--handoff", "handoff.md"]), /baton is held by codex/);
+  fails(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "someone", "--handoff", "handoff.md"]), /--to must be one of/);
+  fails(runBridge(dir, ["duet", "note", "--agent", "someone", "--note", "note.md"]), /--agent must be one of/);
 });
 
 test("duet validates bad inputs and damaged runtime state", (t) => {
@@ -133,9 +186,16 @@ test("duet validates bad inputs and damaged runtime state", (t) => {
   );
   fails(runBridge(dir, ["duet", "pass", "--from", "codex", "--handoff", "handoff.md"]), /invalid duet state: maxIterations/);
 
+  fs.writeFileSync(path.join(dir, "duet-state.json"), "{not-json", "utf8");
+  fails(runBridge(dir, ["duet", "show"]), /duet state is not valid JSON/);
+
   ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--max-iterations", "2", "--force"]));
   fs.rmSync(path.join(dir, "duet-journal.md"));
   fails(runBridge(dir, ["duet", "pass", "--from", "codex", "--handoff", "handoff.md"]), /duet journal is missing/);
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--max-iterations", "2", "--force"]));
+  fs.writeFileSync(path.join(dir, "duet-journal.md"), "   \n", "utf8");
+  fails(runBridge(dir, ["duet", "show"]), /duet journal is empty/);
 });
 
 test("duet lock blocks overlapping mutating commands and stale lock is cleared", (t) => {
@@ -154,6 +214,19 @@ test("duet lock blocks overlapping mutating commands and stale lock is cleared",
   assert.equal(readJson(dir, "duet-state.json").baton, "minimax");
 });
 
+test("duet lock is cleaned up after failed mutating commands", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Cleanup goal");
+  writeFile(dir, "handoff.md", "Cleanup handoff");
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md"]));
+  fails(runBridge(dir, ["duet", "pass", "--from", "minimax", "--handoff", "handoff.md"]), /baton is held by codex/);
+  assert.equal(fs.existsSync(path.join(dir, "duet.lock")), false);
+
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
+  assert.equal(readJson(dir, "duet-state.json").baton, "minimax");
+});
+
 test("safe local commands work in an isolated runtime directory", (t) => {
   const dir = sandbox(t);
 
@@ -164,6 +237,17 @@ test("safe local commands work in an isolated runtime directory", (t) => {
   assert.equal(ok(runBridge(dir, ["session", "show"])).event, "session");
   assert.equal(ok(runBridge(dir, ["deny-session", "list"])).event, "deny-session");
   assert.equal(ok(runBridge(dir, ["token-stats", "--ledger", "--lines", "5"])).event, "token-stats");
+});
+
+test("state command reports duet runtime files when they exist", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "State visibility goal");
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md"]));
+  const state = ok(runBridge(dir, ["state"]));
+  assert.equal(state.runtimeFiles.duetState.exists, true);
+  assert.equal(state.runtimeFiles.duetJournal.exists, true);
+  assert.equal(state.runtimeFiles.duetLock.exists, false);
 });
 
 test("runtime files, duet temp files, and local scratch files are git-ignored", () => {

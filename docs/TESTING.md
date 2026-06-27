@@ -30,12 +30,18 @@ Covered areas:
 
 - Duet lifecycle: `init`, `show`, `pass`, `note`, `done`.
 - Redacted output by default and explicit `--raw` behavior.
+- Raw output behavior for mutating Duet commands.
 - `maxIterations` stop behavior.
+- Explicit `human_escalation`.
+- Wrong baton and invalid agent names.
 - Invalid arguments and oversized goal/handoff/note files.
-- Damaged `duet-state.json` and missing `duet-journal.md`.
+- Malformed or damaged `duet-state.json`, missing `duet-journal.md`, and empty
+  `duet-journal.md`.
 - Fresh and stale `duet.lock` behavior.
+- Lock cleanup after failed mutating commands.
 - Safe local commands: `help`, `config show`, `mode list`, `session show`,
   `deny-session list`, `token-stats --ledger`.
+- `state` visibility for Duet runtime files.
 - `.gitignore` coverage for runtime files and duet atomic temp files.
 - Installable skill and prompt surfaces documenting Duet Relay.
 
