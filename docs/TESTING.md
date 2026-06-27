@@ -45,6 +45,8 @@ Covered areas:
   wrong-baton refusal before any model call.
 - `duet step --agent codex --yes` offline fake-agent path: successful handoff
   apply, redacted default output, usage reporting, and baton transfer to MiniMax.
+- `duet loop --dry-run` local preflight: next-agent preview, token budget stop,
+  terminal stop, verifier config, redaction, and no runtime-file mutation.
 - Redacted and raw `duet transcript export`, including Markdown output and raw
   output path protection.
 - `duet verify` verifier execution, redacted/raw output, non-zero exit codes,

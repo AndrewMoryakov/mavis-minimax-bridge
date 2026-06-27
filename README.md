@@ -299,6 +299,18 @@ same hardened `duet pass` validation, and redact the answer in stdout unless
 `--raw` is passed. If apply fails, the baton is not advanced and the pending
 `.local.md` handoff path is reported for manual recovery.
 
+Preview a future autonomous loop without spending tokens:
+
+```powershell
+node .\bridge.mjs duet loop --dry-run --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+```
+
+`duet loop --dry-run` is a Phase 5C preflight. It does not run Codex, MiniMax,
+or a verifier. It reports whether the current relay can continue, which agent
+would act next, estimated input tokens, loop limits, verifier configuration,
+and stop reasons such as terminal status or token budget. `duet loop --yes` is
+not implemented yet.
+
 Run a local verifier through the bridge:
 
 ```powershell
@@ -399,6 +411,7 @@ node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
+node .\bridge.mjs duet loop --dry-run
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier .\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md

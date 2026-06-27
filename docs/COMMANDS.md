@@ -288,6 +288,7 @@ node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
+node .\bridge.mjs duet loop --dry-run --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcript.local.md
 node .\bridge.mjs duet verify --verifier .\examples\duet-tetris-browser\verify.mjs -- --skip-relay-check
@@ -350,6 +351,12 @@ turn. This can spend OpenAI/Codex tokens. The bridge invokes `codex exec` with
 `--ignore-user-config`, `--ephemeral`, explicit `--cd`, `workspace-write`
 sandboxing, and a bridge timeout. The last Codex message is written to a pending
 `.local.md` handoff and applied through the same hardened `duet pass` path.
+
+Use `duet loop --dry-run` to preview a future autonomous loop without spending
+tokens. It does not run Codex, MiniMax, or a verifier. It reports whether the
+current relay can continue, which agent would act next, estimated input tokens,
+loop limits, optional verifier configuration, and stop reasons. `duet loop
+--yes` is not implemented yet.
 
 Use `duet verify` to run a Node verifier through the bridge. Verifiers must be
 `.js`, `.mjs`, or `.cjs` files inside the bridge root. The command uses

@@ -24,7 +24,7 @@ Always run commands from the repository root.
 - Local-only commands: `doctor`, `status`, `state`, `config show`, `mode list`,
   `session show`, `deny-session list`, `token-stats --ledger`, `audit`,
   `canary-estimate`, `tail`, `duet init/show/next/pass/note`,
-  `duet packet export`, and `duet step --dry-run`.
+  `duet packet export`, `duet step --dry-run`, and `duet loop --dry-run`.
 - Token-spending commands: `ask`, `mvs-send`, `canary`, `optimize-check`
   without `--skip-canary`, `duet step --agent minimax --yes`, and
   `duet step --agent codex --yes`.
@@ -110,6 +110,7 @@ node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
+node .\bridge.mjs duet loop --dry-run
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff path\to\handoff.md
@@ -144,6 +145,10 @@ after explicit token-spending approval. MiniMax uses the review-only model path.
 Codex uses a separate non-interactive `codex exec` process. Both write a pending
 local handoff, apply it through hardened `duet pass`, and redact the answer by
 default.
+
+Use `duet loop --dry-run` to preview the future autonomous loop without spending
+tokens. It reports stop reasons, next agent, token estimate, limits, and
+optional verifier configuration. `duet loop --yes` is not implemented yet.
 
 Use `duet transcript export` for a redacted JSON transcript. Add
 `--format markdown --out .\duet-transcript.local.md` for a Markdown artifact.

@@ -174,6 +174,10 @@ Implemented notes:
 
 ## Phase 5C: Safety Model
 
+Implementation status: started. `duet loop --dry-run` exists as a token-free
+preflight for loop limits, next-agent preview, token estimate, verifier config,
+and stop reasons. `duet loop --yes` is still not implemented.
+
 Required gates:
 
 - `--dry-run` is local-only and token-free.

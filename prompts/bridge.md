@@ -27,6 +27,8 @@ Rules:
 - Use `duet step --agent minimax --yes` or `duet step --agent codex --yes` only
   after explicit token-spending approval; each runs one relay turn and applies
   the handoff.
+- Use `duet loop --dry-run` to preview a future autonomous loop without
+  spending tokens; `duet loop --yes` is not implemented yet.
 - Use token-spending commands only after explicit user approval.
 - Never send to a guessed, burned, denied, or expensive `mvs_...` session.
 - Prefer review-only collaboration before asking MiniMax for patch proposals.

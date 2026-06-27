@@ -506,6 +506,78 @@ test("duet step fake model reply requires explicit test gate", (t) => {
   assert.equal(fs.readdirSync(dir).some((name) => name.includes(".duet-step-minimax-")), false);
 });
 
+test("duet loop dry-run previews next agent step and does not mutate relay files", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_LOOP_DRY_RUN_123";
+  writeFile(dir, "goal.md", `Loop goal ${secret}`);
+  writeFile(dir, "handoff.md", `MiniMax handoff ${secret}`);
+  writeFile(dir, "verify.mjs", "console.log('ok');");
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "minimax", "--max-iterations", "5"]));
+  ok(runBridge(dir, ["duet", "pass", "--from", "minimax", "--to", "codex", "--handoff", "handoff.md"]));
+  const ledgerBefore = fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8");
+  const stateBefore = fs.readFileSync(path.join(dir, "duet-state.json"), "utf8");
+  const journalBefore = fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8");
+
+  const dryRun = ok(runBridge(dir, [
+    "duet",
+    "loop",
+    "--dry-run",
+    "--max-rounds",
+    "4",
+    "--max-codex-steps",
+    "2",
+    "--max-minimax-steps",
+    "2",
+    "--max-tokens",
+    "50000",
+    "--verifier",
+    "verify.mjs",
+    "--",
+    "--fast",
+  ]));
+  assert.equal(dryRun.event, "duet-loop-dry-run");
+  assert.equal(dryRun.tokenSpending, false);
+  assert.equal(dryRun.wouldRunLoop, true);
+  assert.equal(dryRun.wouldCallAgent, true);
+  assert.deepEqual(dryRun.stopReasons, []);
+  assert.equal(dryRun.nextStep.agent, "codex");
+  assert.equal(dryRun.nextStep.mode, "exec");
+  assert.equal(dryRun.nextStep.tokenSpending, true);
+  assert.equal(dryRun.nextStep.withinTokenBudget, true);
+  assert.equal(typeof dryRun.nextStep.estimatedInputTokens, "number");
+  assert.equal(dryRun.nextStep.route.cli, "codex.cmd");
+  assert.equal(dryRun.verifier.path.path, path.join(dir, "verify.mjs"));
+  assert.equal(dryRun.verifier.path.basename, "verify.mjs");
+  assert.deepEqual(dryRun.verifier.args, ["--fast"]);
+  assert.equal(dryRun.limits.maxRounds, 4);
+  assert.doesNotMatch(JSON.stringify(dryRun), new RegExp(secret));
+  assert.equal(fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8"), ledgerBefore);
+  assert.equal(fs.readFileSync(path.join(dir, "duet-state.json"), "utf8"), stateBefore);
+  assert.equal(fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8"), journalBefore);
+});
+
+test("duet loop dry-run reports terminal and budget stops without agent preview", (t) => {
+  const doneDir = sandbox(t);
+  writeFile(doneDir, "goal.md", "Loop done goal");
+  writeFile(doneDir, "handoff.md", "Loop done handoff");
+  ok(runBridge(doneDir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+  ok(runBridge(doneDir, ["duet", "pass", "--from", "codex", "--status", "done", "--handoff", "handoff.md"]));
+  const terminal = ok(runBridge(doneDir, ["duet", "loop", "--dry-run"]));
+  assert.equal(terminal.wouldRunLoop, false);
+  assert.deepEqual(terminal.stopReasons, ["terminal_status:done"]);
+  assert.equal(terminal.nextStep, null);
+
+  const budgetDir = sandbox(t);
+  writeFile(budgetDir, "goal.md", "Loop budget goal");
+  ok(runBridge(budgetDir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+  const budget = ok(runBridge(budgetDir, ["duet", "loop", "--dry-run", "--max-tokens", "1"]));
+  assert.equal(budget.wouldRunLoop, false);
+  assert.match(budget.stopReasons.join(","), /token_budget:/);
+  assert.equal(budget.nextStep.agent, "codex");
+  assert.equal(budget.nextStep.withinTokenBudget, false);
+});
+
 test("raw mutating duet commands expose local text only when explicitly requested", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_RAW_MUTATION_456";

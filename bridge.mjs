@@ -149,6 +149,7 @@ function usage() {
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
   node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--raw] [--max-packet-chars <n>] [--port <port>]
+  node .\\bridge.mjs duet loop --dry-run [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>] [-- <verifier-args>...]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
@@ -3341,6 +3342,118 @@ async function duetStepLive(args) {
   }
 }
 
+function duetLoopDryRun(args) {
+  if (!args.includes("--dry-run")) {
+    if (args.includes("--yes")) throw new Error("duet loop --yes is not implemented yet; use --dry-run for Phase 5C preflight");
+    throw new Error("duet loop requires --dry-run in Phase 5C");
+  }
+  if (args.includes("--yes")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
+  if (args.includes("--force")) throw new Error("duet loop does not support --force");
+
+  const parsed = verifierArgs(args);
+  const options = parsed.options;
+  const raw = options.includes("--raw");
+  const state = readDuetState();
+  const journal = readDuetJournal();
+  const configuredMax = Number(config.duetPacketMaxChars || 60000);
+  const maxPacketChars = positiveIntegerArg(options, "--max-packet-chars", String(configuredMax));
+  const maxLongPromptChars = Number(config.maxLongPromptChars || 160000);
+  if (maxPacketChars > maxLongPromptChars) {
+    throw new Error(`--max-packet-chars must be <= maxLongPromptChars=${maxLongPromptChars}`);
+  }
+
+  const maxRounds = positiveIntegerArg(options, "--max-rounds", "8");
+  const maxCodexSteps = positiveIntegerArg(options, "--max-codex-steps", String(maxRounds));
+  const maxMiniMaxSteps = positiveIntegerArg(options, "--max-minimax-steps", String(maxRounds));
+  const maxTokens = positiveIntegerArg(options, "--max-tokens", "60000");
+  const verifierPathArg = argValue(options, "--verifier", null);
+  const verifier = verifierPathArg
+    ? {
+      path: resolveVerifierPath(verifierPathArg),
+      args: parsed.forwarded,
+    }
+    : null;
+
+  const warnings = [];
+  const stopReasons = [];
+  let nextStep = null;
+  if (state.status !== "running") {
+    stopReasons.push(`terminal_status:${state.status}`);
+  }
+  if (state.iteration > maxRounds) {
+    stopReasons.push(`max_rounds:${state.iteration}/${maxRounds}`);
+  }
+  if (state.status === "running" && !state.baton) {
+    stopReasons.push("missing_baton");
+  }
+  if (!state.lastHandoff) warnings.push("missing_last_handoff");
+
+  if (stopReasons.length === 0) {
+    const agent = requireDuetAgent(state.baton, "state.baton");
+    const rawPacket = createBoundedDuetPacket(agent, true, "markdown", maxPacketChars);
+    const redactedPacket = createBoundedDuetPacket(agent, false, "json", maxPacketChars);
+    const promptText = duetStepPrompt(agent, rawPacket.rendered);
+    const promptForEstimate = agent === "minimax" ? addOptimizationContext(promptText, { role: "main" }) : promptText;
+    const estimatedInputTokens = estimateInputTokensForText(promptForEstimate);
+    if (estimatedInputTokens > maxTokens) stopReasons.push(`token_budget:${estimatedInputTokens}/${maxTokens}`);
+    if (agent === "codex" && maxCodexSteps < 1) stopReasons.push("max_codex_steps:0");
+    if (agent === "minimax" && maxMiniMaxSteps < 1) stopReasons.push("max_minimax_steps:0");
+    nextStep = {
+      agent,
+      command: `node .\\bridge.mjs duet step --agent ${agent} --yes`,
+      mode: agent === "minimax" ? "review-only" : "exec",
+      tokenSpending: true,
+      estimatedInputTokens,
+      withinTokenBudget: estimatedInputTokens <= maxTokens,
+      packet: raw
+        ? {
+          maxChars: maxPacketChars,
+          rawChars: rawPacket.rendered.length,
+          rawSha256: textDigest(rawPacket.rendered),
+          rawOverBudget: rawPacket.payload.packet.overBudget,
+          redactedChars: redactedPacket.rendered.length,
+          redactedSha256: textDigest(redactedPacket.rendered),
+        }
+        : {
+          maxChars: maxPacketChars,
+          redactedChars: redactedPacket.rendered.length,
+          redactedSha256: textDigest(redactedPacket.rendered),
+          rawOverBudget: rawPacket.payload.packet.overBudget,
+        },
+      route: agent === "minimax"
+        ? { provider: providerFromModel(requiredModel()), model: requiredModel(), outputCapTokens: roleOutputCap("main") }
+        : { provider: "openai", model: "codex-cli", cli: config.codexCli, sandbox: "workspace-write", timeoutSec: config.codexStepTimeoutSec },
+    };
+  }
+
+  printJson({
+    event: "duet-loop-dry-run",
+    mode: "preflight",
+    tokenSpending: false,
+    wouldRunLoop: stopReasons.length === 0,
+    wouldCallAgent: stopReasons.length === 0,
+    stopReasons,
+    warning: warnings[0] || null,
+    warnings,
+    limits: {
+      maxRounds,
+      maxCodexSteps,
+      maxMiniMaxSteps,
+      maxTokens,
+      maxPacketChars,
+    },
+    verifier: verifier
+      ? {
+        path: verifier.path,
+        args: verifier.args,
+      }
+      : null,
+    nextStep,
+    lastVerifier: lastDuetVerifierSummary(journal),
+    state: raw ? state : publicDuetState(state),
+  });
+}
+
 function appendDuetJournal(markdown) {
   readDuetJournal();
   fs.appendFileSync(duetJournalPath, `\n${markdown.trim()}\n`, "utf8");
@@ -3759,6 +3872,7 @@ async function duetCommand(args) {
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
   node .\\bridge.mjs duet packet export --agent minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--raw] [--max-packet-chars <n>] [--port <port>]
+  node .\\bridge.mjs duet loop --dry-run [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>] [-- <verifier-args>...]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
@@ -3773,6 +3887,7 @@ async function duetCommand(args) {
     if (rest.includes("--dry-run")) return duetStepDryRun(rest);
     return await withDuetLockAsync(() => duetStepLive(rest));
   }
+  if (subcommand === "loop") return duetLoopDryRun(rest);
   if (subcommand === "transcript") {
     const [action, ...actionRest] = rest;
     if (action === "export") return duetTranscriptExport(actionRest);

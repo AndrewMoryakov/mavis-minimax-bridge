@@ -23,7 +23,7 @@ Always run commands from that directory.
 - `doctor`, `status`, `state`, `audit`, `token-stats`, `session show`, `mode list`, and
   `canary-estimate` are local-only and do not intentionally start a model turn.
 - `duet init`, `duet show`, `duet next`, `duet packet export`,
-  `duet step --dry-run`, `duet pass`, and `duet note` are local-only
+  `duet step --dry-run`, `duet loop --dry-run`, `duet pass`, and `duet note` are local-only
   coordination commands. They do not call an agent.
 - `ask`, `canary`, `optimize-check` without `--skip-canary`, `mvs-send`, and
   `duet step --agent minimax --yes` / `duet step --agent codex --yes` can spend
@@ -63,6 +63,7 @@ node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
+node .\bridge.mjs duet loop --dry-run
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 ```
@@ -222,6 +223,18 @@ node .\bridge.mjs duet step --agent codex --yes
 Runs one non-interactive Codex relay turn through `codex exec`, stores the last
 message as a pending local handoff, applies it through hardened `duet pass`, and
 redacts the answer unless `--raw` is explicitly passed.
+
+### `/bridge duet loop dry-run`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet loop --dry-run
+```
+
+Previews the future autonomous loop without spending tokens. It reports stop
+reasons, next agent, token estimate, limits, and optional verifier configuration.
+`duet loop --yes` is not implemented yet.
 
 ### `/bridge duet transcript export`
 
