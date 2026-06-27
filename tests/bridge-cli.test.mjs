@@ -83,6 +83,10 @@ function git(dir, args) {
   return result;
 }
 
+function bridgeRuntimeGitPaths(dir) {
+  return fs.existsSync(path.join(dir, "lib")) ? ["bridge.mjs", "lib"] : ["bridge.mjs"];
+}
+
 test("duet lifecycle redacts by default and exposes text only with --raw", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_DUET_TEST_123";
@@ -1266,7 +1270,7 @@ test("ask dry-run attaches dirty worktree source context by default", (t) => {
   git(dir, ["config", "user.email", "test@example.invalid"]);
   git(dir, ["config", "user.name", "Bridge Test"]);
   writeFile(dir, "tracked.txt", "before\n");
-  git(dir, ["add", "bridge.mjs", "tracked.txt"]);
+  git(dir, ["add", ...bridgeRuntimeGitPaths(dir), "tracked.txt"]);
   git(dir, ["commit", "-m", "seed"]);
 
   writeFile(dir, "task.md", "Review local changes.");
@@ -1309,7 +1313,7 @@ test("ask dry-run can include explicit source from a clean worktree", (t) => {
   writeFile(dir, "task.md", "Review explicit includes.");
   writeFile(dir, "src/alpha.txt", "EXPLICIT_INCLUDE_ALPHA\n");
   writeFile(dir, "src/beta.txt", "EXPLICIT_INCLUDE_BETA\n");
-  git(dir, ["add", "bridge.mjs", "task.md", "src/alpha.txt", "src/beta.txt"]);
+  git(dir, ["add", ...bridgeRuntimeGitPaths(dir), "task.md", "src/alpha.txt", "src/beta.txt"]);
   git(dir, ["commit", "-m", "seed"]);
 
   const dryRun = ok(runBridge(dir, [

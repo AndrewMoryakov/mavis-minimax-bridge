@@ -9,11 +9,15 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceBridge = path.join(repoRoot, "bridge.mjs");
+const sourceLib = path.join(repoRoot, "lib");
 const sourceTask = path.join(repoRoot, "examples", "duet-simple-orders");
 
 function sandbox(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-acceptance-"));
   fs.copyFileSync(sourceBridge, path.join(dir, "bridge.mjs"));
+  if (fs.existsSync(sourceLib)) {
+    fs.cpSync(sourceLib, path.join(dir, "lib"), { recursive: true });
+  }
   fs.cpSync(sourceTask, path.join(dir, "examples", "duet-simple-orders"), { recursive: true });
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;

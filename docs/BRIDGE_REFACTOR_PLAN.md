@@ -1,6 +1,6 @@
 # Bridge Refactor Plan
 
-Status: accepted plan, not implemented yet.
+Status: implemented through Patch 5.
 
 Goal: reduce the size and coupling of `bridge.mjs` without changing public CLI
 behavior. Every patch must keep `npm run test:release` green.
@@ -87,6 +87,8 @@ Checks:
 
 Purpose: move low-risk leaf helpers first.
 
+Implementation status: done.
+
 New file:
 
 - `lib/json.mjs`
@@ -127,6 +129,8 @@ Optional later helper:
 
 Purpose: centralize path construction without changing root semantics.
 
+Implementation status: done.
+
 New file:
 
 - `lib/paths.mjs`
@@ -166,6 +170,8 @@ Checks:
 Purpose: reduce config coupling without creating a second config singleton or
 import cycle.
 
+Implementation status: done as the narrow version.
+
 Do not start with a full config move.
 
 Safer first move:
@@ -188,6 +194,13 @@ Keep in `bridge.mjs` initially, unless injected explicitly:
 - `loadInitialConfig`
 - `writeConfig`
 - `printJson`
+
+Actual implementation:
+
+- `lib/config-core.mjs` owns `defaultConfig`, `normalizeConfig`,
+  `validateNumberRange`, `validateConfig`, and `parseConfigValue`.
+- `config`, `configLoadError`, `loadInitialConfig`, `writeConfig`, and
+  `printJson` remain in `bridge.mjs`.
 
 If `writeConfig` is later extracted, its shape should avoid direct ledger/config
 cycles:
@@ -218,6 +231,8 @@ Tests:
 
 Purpose: extract small Duet leaves, not orchestration.
 
+Implementation status: done.
+
 Candidates:
 
 - `lib/duet-lock.mjs`
@@ -233,6 +248,14 @@ Keep in `bridge.mjs` for this series:
 - Duet step/loop orchestration
 - agent runners
 - transcript/report/packet rendering unless extracted as a separate later plan
+
+Actual implementation:
+
+- `lib/duet-lock.mjs` owns file-lock acquire/release helpers and
+  `duetLockStaleMs`.
+- `lib/duet-journal.mjs` owns journal read/append helpers.
+- `bridge.mjs` keeps thin wrappers so the Duet command code keeps the same local
+  API.
 
 Tests:
 
