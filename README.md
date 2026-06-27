@@ -218,7 +218,8 @@ let's go
 ```
 
 See [docs/LETS_GO.md](docs/LETS_GO.md) for the agent-side behavior behind this
-prompt.
+prompt. For a longer autonomous run where the human approves one bounded live
+loop and reads the final report, use [docs/LIVE_RUNBOOK.md](docs/LIVE_RUNBOOK.md).
 
 Important: Duet Relay records the baton and shared state. It does not wake,
 message, or activate the other agent automatically. Continue from the other
@@ -471,9 +472,10 @@ automated tests.
 
 See [docs/TESTING.md](docs/TESTING.md) for details. For a live Codex/MiniMax
 smoke test, see [docs/DUET_ACCEPTANCE_TEST.md](docs/DUET_ACCEPTANCE_TEST.md)
-or [docs/DUET_TETRIS_BROWSER_TEST.md](docs/DUET_TETRIS_BROWSER_TEST.md). The
-Tetris smoke includes a minimal "Сделай тетрис" start where the agents decide
-their own plan, roles, checks, and baton handoff.
+or [docs/DUET_TETRIS_BROWSER_TEST.md](docs/DUET_TETRIS_BROWSER_TEST.md). For a
+general one-prompt live workflow, see [docs/LIVE_RUNBOOK.md](docs/LIVE_RUNBOOK.md).
+The Tetris smoke includes a minimal "Сделай тетрис" start where the agents
+decide their own plan, roles, checks, and baton handoff.
 
 GUI slash skill equivalents after `npm run install:skill`:
 

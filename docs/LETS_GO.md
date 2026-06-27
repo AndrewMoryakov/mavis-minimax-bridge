@@ -10,6 +10,10 @@ let's go
 
 The agent should then run the local Duet Relay setup itself.
 
+For a longer autonomous run that uses `duet start`, `duet loop --dry-run`,
+one approved `duet loop --yes`, and `duet report`, see
+[LIVE_RUNBOOK.md](LIVE_RUNBOOK.md).
+
 Important: Duet Relay records the baton and shared state. It does not wake,
 message, or activate the other agent automatically. To continue on the other
 side, open that agent's surface and ask it to continue the current Duet Relay,

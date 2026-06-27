@@ -391,6 +391,9 @@ compact metrics-only verification note to an active Duet journal.
 For the simplest user flow, describe the task to Codex or MiniMax and end with
 `let's go`. See [LETS_GO.md](LETS_GO.md).
 
+For a longer autonomous run where the human approves one bounded live loop and
+then reads the final report, see [LIVE_RUNBOOK.md](LIVE_RUNBOOK.md).
+
 Duet Relay records baton state locally. It does not wake, message, or activate
 the other agent automatically.
 

@@ -1390,6 +1390,7 @@ test("installable skill and prompt surfaces document duet relay", () => {
     "docs/COMMANDS.md",
     "docs/DUET_RELAY.md",
     "docs/LETS_GO.md",
+    "docs/LIVE_RUNBOOK.md",
     "docs/RUNTIME_FILES.md",
   ];
 
@@ -1403,4 +1404,11 @@ test("installable skill and prompt surfaces document duet relay", () => {
     assert.match(text, /let's go/, `${relative} should document the natural-language start`);
     assert.match(text, /does not wake, message, or\s+activate/, `${relative} should clarify that relay does not auto-activate the other agent`);
   }
+
+  const runbook = fs.readFileSync(path.join(repoRoot, "docs/LIVE_RUNBOOK.md"), "utf8");
+  assert.match(runbook, /duet start --goal/, "live runbook should start with duet start");
+  assert.match(runbook, /duet loop --dry-run/, "live runbook should require dry-run preflight");
+  assert.match(runbook, /duet loop --yes/, "live runbook should document the live loop");
+  assert.match(runbook, /duet report/, "live runbook should finish with report");
+  assert.match(runbook, /can spend Codex\/OpenAI and MiniMax tokens/, "live runbook should warn about token spending");
 });

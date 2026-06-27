@@ -84,3 +84,7 @@ Safety notes:
   intentionally need local goal, handoff, or journal text.
 - `npm run test:release` is offline. It does not call MiniMax, run real Codex
   steps, or spend tokens.
+
+For the longer live flow, use
+[`docs/LIVE_RUNBOOK.md`](LIVE_RUNBOOK.md): `duet start`, `duet loop --dry-run`,
+one explicitly approved `duet loop --yes`, then `duet report`.
