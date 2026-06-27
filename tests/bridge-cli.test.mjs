@@ -609,6 +609,31 @@ test("duet loop yes applies fake steps until done without leaking by default", (
   assert.match(state.lastHandoff, new RegExp(secret));
 });
 
+test("duet loop yes stops when actual step usage exceeds token budget", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Loop actual token budget goal");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: running\n\n${"x".repeat(18000)}`,
+  };
+  const result = ok(runBridge(dir, ["duet", "loop", "--yes", "--max-rounds", "3", "--max-tokens", "3000"], { env }));
+  assert.equal(result.event, "duet-loop");
+  assert.equal(result.status, "running");
+  assert.match(result.stopReasons.join(","), /actual_token_budget:/);
+  assert.equal(result.counts.rounds, 1);
+  assert.equal(result.counts.codexSteps, 1);
+  assert.equal(result.counts.minimaxSteps, 0);
+  assert.equal(result.steps[0].applyStatus, "applied");
+  assert.equal(result.usage.inputTokens + result.usage.outputTokens > result.limits.maxTokens, true);
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.status, "running");
+  assert.equal(state.baton, "minimax");
+});
+
 test("duet loop yes stops repeated fake handoffs before max iterations", (t) => {
   const dir = sandbox(t);
   writeFile(dir, "goal.md", "Loop repeated handoff goal");

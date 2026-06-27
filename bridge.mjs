@@ -3557,6 +3557,10 @@ async function duetLoopLive(args) {
       stopReasons.push("step_apply_failed");
       break;
     }
+    if (totalInputTokens + totalOutputTokens > maxTokens) {
+      stopReasons.push(`actual_token_budget:${totalInputTokens + totalOutputTokens}/${maxTokens}`);
+      break;
+    }
 
     const handoffHash = stepResult.out.answerSummary?.sha256 || null;
     if (handoffHash && handoffHash === lastHandoffHash) repeatedHandoffHashCount += 1;
