@@ -578,6 +578,84 @@ test("duet loop dry-run reports terminal and budget stops without agent preview"
   assert.equal(budget.nextStep.withinTokenBudget, false);
 });
 
+test("duet loop yes applies fake steps until done without leaking by default", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_LOOP_DONE_123";
+  writeFile(dir, "goal.md", `Loop live goal ${secret}`);
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: done\n\nCodex loop completed ${secret}.`,
+  };
+  const result = ok(runBridge(dir, ["duet", "loop", "--yes", "--max-rounds", "3"], { env }));
+  assert.equal(result.event, "duet-loop");
+  assert.equal(result.mode, "live");
+  assert.equal(result.tokenSpending, true);
+  assert.equal(result.status, "done");
+  assert.deepEqual(result.stopReasons, ["terminal_status:done"]);
+  assert.equal(result.counts.rounds, 1);
+  assert.equal(result.counts.codexSteps, 1);
+  assert.equal(result.counts.minimaxSteps, 0);
+  assert.equal(result.steps[0].agent, "codex");
+  assert.equal(result.steps[0].applyStatus, "applied");
+  assert.equal(result.usage.estimatedInputTokens > 0, true);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.status, "done");
+  assert.equal(state.baton, null);
+  assert.match(state.lastHandoff, new RegExp(secret));
+});
+
+test("duet loop yes stops repeated fake handoffs before max iterations", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Loop repeated handoff goal");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "8"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: "Status: running\n\nSame handoff every time.",
+  };
+  const result = ok(runBridge(dir, ["duet", "loop", "--yes", "--max-rounds", "5", "--max-codex-steps", "3", "--max-minimax-steps", "3"], { env }));
+  assert.equal(result.event, "duet-loop");
+  assert.equal(result.status, "running");
+  assert.deepEqual(result.stopReasons, ["repeated_handoff_hash"]);
+  assert.equal(result.counts.rounds, 2);
+  assert.equal(result.counts.codexSteps, 1);
+  assert.equal(result.counts.minimaxSteps, 1);
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.status, "running");
+  assert.equal(state.baton, "codex");
+});
+
+test("duet loop yes stops on verifier failure after a running step", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Loop verifier failure goal");
+  writeFile(dir, "verify.mjs", "console.error('not yet'); process.exit(2);");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "8"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: "Status: running\n\nContinue after verifier.",
+  };
+  const result = ok(runBridge(dir, ["duet", "loop", "--yes", "--max-rounds", "5", "--verifier", "verify.mjs"], { env }));
+  assert.equal(result.event, "duet-loop");
+  assert.deepEqual(result.stopReasons, ["verifier_fail"]);
+  assert.equal(result.counts.rounds, 1);
+  assert.equal(result.verifierRuns.length, 1);
+  assert.equal(result.verifierRuns[0].status, "fail");
+  assert.equal(result.verifierRuns[0].exitCode, 2);
+
+  const journal = fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8");
+  assert.match(journal, /Verify - loop/);
+  assert.match(journal, /status=fail/);
+});
+
 test("raw mutating duet commands expose local text only when explicitly requested", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_RAW_MUTATION_456";

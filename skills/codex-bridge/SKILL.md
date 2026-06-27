@@ -27,7 +27,7 @@ Always run commands from the repository root.
   `duet packet export`, `duet step --dry-run`, and `duet loop --dry-run`.
 - Token-spending commands: `ask`, `mvs-send`, `canary`, `optimize-check`
   without `--skip-canary`, `duet step --agent minimax --yes`, and
-  `duet step --agent codex --yes`.
+  `duet step --agent codex --yes`, and `duet loop --yes`.
 - Ask for explicit user approval before running token-spending commands.
 - Never send to a burned, denied, or guessed `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
@@ -99,7 +99,7 @@ node .\bridge.mjs mode set --prompt-cache off --context-budget off
 Use Duet Relay when Codex and MiniMax need to pass a task back and forth after
 the human gives the initial goal. These commands are local-only except for
 explicit `duet step --agent minimax --yes` and
-`duet step --agent codex --yes`:
+`duet step --agent codex --yes` / `duet loop --yes`:
 
 ```powershell
 node .\bridge.mjs duet init --goal path\to\goal.md --baton codex --max-iterations 12
@@ -111,6 +111,7 @@ node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
+node .\bridge.mjs duet loop --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff path\to\handoff.md
@@ -146,9 +147,14 @@ Codex uses a separate non-interactive `codex exec` process. Both write a pending
 local handoff, apply it through hardened `duet pass`, and redact the answer by
 default.
 
-Use `duet loop --dry-run` to preview the future autonomous loop without spending
+Use `duet loop --dry-run` to preview the autonomous loop without spending
 tokens. It reports stop reasons, next agent, token estimate, limits, and
-optional verifier configuration. `duet loop --yes` is not implemented yet.
+optional verifier configuration.
+
+Run `duet loop --yes` only after explicit token-spending approval. It alternates
+the current baton holder through hardened `duet step --agent <agent> --yes`,
+optionally runs a verifier between running steps, and stops on terminal status,
+limits, token budget, repeated handoff hash, apply failure, or verifier failure.
 
 Use `duet transcript export` for a redacted JSON transcript. Add
 `--format markdown --out .\duet-transcript.local.md` for a Markdown artifact.

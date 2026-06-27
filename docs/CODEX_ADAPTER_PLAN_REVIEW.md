@@ -176,7 +176,8 @@ Implemented notes:
 
 Implementation status: started. `duet loop --dry-run` exists as a token-free
 preflight for loop limits, next-agent preview, token estimate, verifier config,
-and stop reasons. `duet loop --yes` is still not implemented.
+and stop reasons. Initial `duet loop --yes` exists for bounded live loops and is
+covered by offline fake-agent tests.
 
 Required gates:
 
@@ -230,7 +231,8 @@ Human escalation:
 
 Do not implement until Codex invocation and one-step Codex adapter are proven.
 
-Current status: not implemented.
+Implementation status: initial bounded loop implemented and covered by offline
+fake-agent tests. Live long-run gauntlet is still pending.
 
 After both adapters exist, add:
 

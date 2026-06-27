@@ -27,16 +27,19 @@ Rules:
 - Use `duet step --agent minimax --yes` or `duet step --agent codex --yes` only
   after explicit token-spending approval; each runs one relay turn and applies
   the handoff.
-- Use `duet loop --dry-run` to preview a future autonomous loop without
-  spending tokens; `duet loop --yes` is not implemented yet.
+- Use `duet loop --dry-run` to preview an autonomous loop without spending
+  tokens.
+- Use `duet loop --yes` only after explicit token-spending approval; it can run
+  both Codex and MiniMax steps.
 - Use token-spending commands only after explicit user approval.
 - Never send to a guessed, burned, denied, or expensive `mvs_...` session.
 - Prefer review-only collaboration before asking MiniMax for patch proposals.
 - `ask` attaches bounded local Git source context for dirty worktrees by
   default; use `--dry-run --raw` to inspect it without spending tokens.
 - Duet Relay commands are local-only except for explicit
-  `duet step --agent minimax --yes` and `duet step --agent codex --yes`. Use
-  relay commands for baton-passing state, not arbitrary prompts.
+  `duet step --agent minimax --yes`, `duet step --agent codex --yes`, and
+  `duet loop --yes`. Use relay commands for baton-passing state, not arbitrary
+  prompts.
 - Duet Relay does not wake, message, or activate the other agent automatically.
 - Duet output is redacted by default; use `--raw` only when the user explicitly
   needs local goal, handoff, or journal text in stdout.

@@ -3219,7 +3219,7 @@ function duetStepDryRun(args) {
   });
 }
 
-async function duetStepLive(args) {
+async function runDuetStepLive(args) {
   const raw = args.includes("--raw");
   if (!args.includes("--yes")) throw new Error("duet step requires --dry-run or --yes");
   if (args.includes("--dry-run")) throw new Error("duet step accepts either --dry-run or --yes, not both");
@@ -3312,9 +3312,7 @@ async function duetStepLive(args) {
     };
     appendJsonl(ledgerPath, out);
     appendJsonl(outboxPath, out);
-    printJson(out);
-    process.exitCode = 1;
-    return;
+    return { out, failed: true };
   }
 
   let finalAppliedPath = appliedPath;
@@ -3338,41 +3336,92 @@ async function duetStepLive(args) {
     };
     appendJsonl(ledgerPath, out);
     appendJsonl(outboxPath, out);
-    printJson(out);
+    return { out, failed: false };
   }
 }
 
-function duetLoopDryRun(args) {
-  if (!args.includes("--dry-run")) {
-    if (args.includes("--yes")) throw new Error("duet loop --yes is not implemented yet; use --dry-run for Phase 5C preflight");
-    throw new Error("duet loop requires --dry-run in Phase 5C");
-  }
-  if (args.includes("--yes")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
-  if (args.includes("--force")) throw new Error("duet loop does not support --force");
+async function duetStepLive(args) {
+  const result = await runDuetStepLive(args);
+  printJson(result.out);
+  if (result.failed) process.exitCode = 1;
+}
 
+function parseDuetLoopOptions(args) {
   const parsed = verifierArgs(args);
   const options = parsed.options;
   const raw = options.includes("--raw");
-  const state = readDuetState();
-  const journal = readDuetJournal();
+  if (options.includes("--force")) throw new Error("duet loop does not support --force");
   const configuredMax = Number(config.duetPacketMaxChars || 60000);
   const maxPacketChars = positiveIntegerArg(options, "--max-packet-chars", String(configuredMax));
   const maxLongPromptChars = Number(config.maxLongPromptChars || 160000);
   if (maxPacketChars > maxLongPromptChars) {
     throw new Error(`--max-packet-chars must be <= maxLongPromptChars=${maxLongPromptChars}`);
   }
-
-  const maxRounds = positiveIntegerArg(options, "--max-rounds", "8");
-  const maxCodexSteps = positiveIntegerArg(options, "--max-codex-steps", String(maxRounds));
-  const maxMiniMaxSteps = positiveIntegerArg(options, "--max-minimax-steps", String(maxRounds));
-  const maxTokens = positiveIntegerArg(options, "--max-tokens", "60000");
   const verifierPathArg = argValue(options, "--verifier", null);
-  const verifier = verifierPathArg
-    ? {
-      path: resolveVerifierPath(verifierPathArg),
-      args: parsed.forwarded,
-    }
-    : null;
+  validateForwardedVerifierArgs(parsed.forwarded);
+  return {
+    options,
+    raw,
+    maxPacketChars,
+    maxRounds: positiveIntegerArg(options, "--max-rounds", "8"),
+    maxCodexSteps: positiveIntegerArg(options, "--max-codex-steps", "8"),
+    maxMiniMaxSteps: positiveIntegerArg(options, "--max-minimax-steps", "8"),
+    maxTokens: positiveIntegerArg(options, "--max-tokens", "60000"),
+    verifierTimeoutSec: positiveIntegerArg(options, "--verifier-timeout-sec", "60"),
+    verifier: verifierPathArg
+      ? {
+        path: resolveVerifierPath(verifierPathArg),
+        args: parsed.forwarded,
+      }
+      : null,
+  };
+}
+
+function duetLoopStepPreview(agent, maxPacketChars, maxTokens, raw) {
+  const rawPacket = createBoundedDuetPacket(agent, true, "markdown", maxPacketChars);
+  const redactedPacket = createBoundedDuetPacket(agent, false, "json", maxPacketChars);
+  const promptText = duetStepPrompt(agent, rawPacket.rendered);
+  const promptForEstimate = agent === "minimax" ? addOptimizationContext(promptText, { role: "main" }) : promptText;
+  const estimatedInputTokens = estimateInputTokensForText(promptForEstimate);
+  return {
+    agent,
+    command: `node .\\bridge.mjs duet step --agent ${agent} --yes`,
+    mode: agent === "minimax" ? "review-only" : "exec",
+    tokenSpending: true,
+    estimatedInputTokens,
+    withinTokenBudget: estimatedInputTokens <= maxTokens,
+    packet: raw
+      ? {
+        maxChars: maxPacketChars,
+        rawChars: rawPacket.rendered.length,
+        rawSha256: textDigest(rawPacket.rendered),
+        rawOverBudget: rawPacket.payload.packet.overBudget,
+        redactedChars: redactedPacket.rendered.length,
+        redactedSha256: textDigest(redactedPacket.rendered),
+      }
+      : {
+        maxChars: maxPacketChars,
+        redactedChars: redactedPacket.rendered.length,
+        redactedSha256: textDigest(redactedPacket.rendered),
+        rawOverBudget: rawPacket.payload.packet.overBudget,
+      },
+    route: agent === "minimax"
+      ? { provider: providerFromModel(requiredModel()), model: requiredModel(), outputCapTokens: roleOutputCap("main") }
+      : { provider: "openai", model: "codex-cli", cli: config.codexCli, sandbox: "workspace-write", timeoutSec: config.codexStepTimeoutSec },
+  };
+}
+
+function duetLoopDryRun(args) {
+  if (!args.includes("--dry-run")) {
+    if (args.includes("--yes")) throw new Error("duet loop --yes requires the live loop path; do not combine it with --dry-run");
+    throw new Error("duet loop requires --dry-run or --yes");
+  }
+  if (args.includes("--yes")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
+
+  const loop = parseDuetLoopOptions(args);
+  const { raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, verifier } = loop;
+  const state = readDuetState();
+  const journal = readDuetJournal();
 
   const warnings = [];
   const stopReasons = [];
@@ -3390,40 +3439,10 @@ function duetLoopDryRun(args) {
 
   if (stopReasons.length === 0) {
     const agent = requireDuetAgent(state.baton, "state.baton");
-    const rawPacket = createBoundedDuetPacket(agent, true, "markdown", maxPacketChars);
-    const redactedPacket = createBoundedDuetPacket(agent, false, "json", maxPacketChars);
-    const promptText = duetStepPrompt(agent, rawPacket.rendered);
-    const promptForEstimate = agent === "minimax" ? addOptimizationContext(promptText, { role: "main" }) : promptText;
-    const estimatedInputTokens = estimateInputTokensForText(promptForEstimate);
-    if (estimatedInputTokens > maxTokens) stopReasons.push(`token_budget:${estimatedInputTokens}/${maxTokens}`);
+    nextStep = duetLoopStepPreview(agent, maxPacketChars, maxTokens, raw);
+    if (nextStep.estimatedInputTokens > maxTokens) stopReasons.push(`token_budget:${nextStep.estimatedInputTokens}/${maxTokens}`);
     if (agent === "codex" && maxCodexSteps < 1) stopReasons.push("max_codex_steps:0");
     if (agent === "minimax" && maxMiniMaxSteps < 1) stopReasons.push("max_minimax_steps:0");
-    nextStep = {
-      agent,
-      command: `node .\\bridge.mjs duet step --agent ${agent} --yes`,
-      mode: agent === "minimax" ? "review-only" : "exec",
-      tokenSpending: true,
-      estimatedInputTokens,
-      withinTokenBudget: estimatedInputTokens <= maxTokens,
-      packet: raw
-        ? {
-          maxChars: maxPacketChars,
-          rawChars: rawPacket.rendered.length,
-          rawSha256: textDigest(rawPacket.rendered),
-          rawOverBudget: rawPacket.payload.packet.overBudget,
-          redactedChars: redactedPacket.rendered.length,
-          redactedSha256: textDigest(redactedPacket.rendered),
-        }
-        : {
-          maxChars: maxPacketChars,
-          redactedChars: redactedPacket.rendered.length,
-          redactedSha256: textDigest(redactedPacket.rendered),
-          rawOverBudget: rawPacket.payload.packet.overBudget,
-        },
-      route: agent === "minimax"
-        ? { provider: providerFromModel(requiredModel()), model: requiredModel(), outputCapTokens: roleOutputCap("main") }
-        : { provider: "openai", model: "codex-cli", cli: config.codexCli, sandbox: "workspace-write", timeoutSec: config.codexStepTimeoutSec },
-    };
   }
 
   printJson({
@@ -3452,6 +3471,156 @@ function duetLoopDryRun(args) {
     lastVerifier: lastDuetVerifierSummary(journal),
     state: raw ? state : publicDuetState(state),
   });
+}
+
+async function runDuetLoopVerifier(loop, raw) {
+  if (!loop.verifier) return null;
+  if (loop.verifierTimeoutSec > 600) throw new Error("--verifier-timeout-sec must be <= 600");
+  const verifierBytes = fs.readFileSync(loop.verifier.path.path);
+  const run = await runVerifierProcess(loop.verifier.path, loop.verifier.args, loop.verifierTimeoutSec, raw);
+  return {
+    event: "duet-loop-verify",
+    raw,
+    redacted: !raw,
+    verifier: {
+      basename: loop.verifier.path.basename,
+      bytes: loop.verifier.path.bytes,
+      sha256: createHash("sha256").update(verifierBytes).digest("hex"),
+    },
+    timeoutSec: loop.verifierTimeoutSec,
+    args: loop.verifier.args,
+    ...run,
+  };
+}
+
+async function duetLoopLive(args) {
+  if (!args.includes("--yes")) throw new Error("duet loop requires --dry-run or --yes");
+  if (args.includes("--dry-run")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
+  requireSpendingApproval(args, "duet loop");
+  const loop = parseDuetLoopOptions(args);
+  const { raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens } = loop;
+  const startedAt = now();
+  const startedMs = Date.now();
+  const steps = [];
+  const verifierRuns = [];
+  const stopReasons = [];
+  let codexSteps = 0;
+  let minimaxSteps = 0;
+  let totalEstimatedInputTokens = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let lastHandoffHash = null;
+  let repeatedHandoffHashCount = 0;
+
+  for (let round = 1; round <= maxRounds; round += 1) {
+    const state = readDuetState();
+    if (state.status !== "running") {
+      stopReasons.push(`terminal_status:${state.status}`);
+      break;
+    }
+    if (!state.baton) {
+      stopReasons.push("missing_baton");
+      break;
+    }
+    const agent = requireDuetAgent(state.baton, "state.baton");
+    if (agent === "codex" && codexSteps >= maxCodexSteps) {
+      stopReasons.push(`max_codex_steps:${codexSteps}/${maxCodexSteps}`);
+      break;
+    }
+    if (agent === "minimax" && minimaxSteps >= maxMiniMaxSteps) {
+      stopReasons.push(`max_minimax_steps:${minimaxSteps}/${maxMiniMaxSteps}`);
+      break;
+    }
+    const preview = duetLoopStepPreview(agent, maxPacketChars, maxTokens - totalEstimatedInputTokens, raw);
+    if (totalEstimatedInputTokens + preview.estimatedInputTokens > maxTokens) {
+      stopReasons.push(`token_budget:${totalEstimatedInputTokens + preview.estimatedInputTokens}/${maxTokens}`);
+      break;
+    }
+    totalEstimatedInputTokens += preview.estimatedInputTokens;
+
+    const stepResult = await runDuetStepLive(["--agent", agent, "--yes", "--max-packet-chars", String(maxPacketChars), ...(raw ? ["--raw"] : [])]);
+    steps.push({
+      agent,
+      status: stepResult.out.status,
+      applyStatus: stepResult.out.applyStatus,
+      failed: stepResult.failed,
+      usage: stepResult.out.usage || null,
+      answerSummary: stepResult.out.answerSummary,
+      state: stepResult.out.state,
+    });
+    if (agent === "codex") codexSteps += 1;
+    else minimaxSteps += 1;
+    const usage = stepResult.out.usage || stepResult.out.signals || {};
+    totalInputTokens += Number(usage.input_tokens ?? usage.inputTokens ?? 0) || 0;
+    totalOutputTokens += Number(usage.output_tokens ?? usage.outputTokens ?? 0) || 0;
+    if (stepResult.failed) {
+      stopReasons.push("step_apply_failed");
+      break;
+    }
+
+    const handoffHash = stepResult.out.answerSummary?.sha256 || null;
+    if (handoffHash && handoffHash === lastHandoffHash) repeatedHandoffHashCount += 1;
+    else repeatedHandoffHashCount = 0;
+    lastHandoffHash = handoffHash;
+    if (repeatedHandoffHashCount >= 1) {
+      stopReasons.push("repeated_handoff_hash");
+      break;
+    }
+
+    const currentState = readDuetState();
+    if (loop.verifier && currentState.status === "running") {
+      const verifierResult = await runDuetLoopVerifier(loop, raw);
+      verifierRuns.push({
+        status: verifierResult.status,
+        exitCode: verifierResult.exitCode,
+        durationMs: verifierResult.durationMs,
+        verifier: verifierResult.verifier,
+      });
+      appendJsonl(ledgerPath, verifierResult);
+      appendJsonl(outboxPath, verifierResult);
+      appendDuetJournal(`## Verify - loop - ${verifierResult.endedAt}\n\nstatus=${verifierResult.status} exit=${verifierResult.exitCode ?? "null"} durationMs=${verifierResult.durationMs} verifier=${verifierResult.verifier.basename}`);
+      if (verifierResult.status !== "ok") {
+        stopReasons.push(`verifier_${verifierResult.status}`);
+        break;
+      }
+    }
+  }
+
+  if (stopReasons.length === 0) stopReasons.push(`max_rounds:${maxRounds}`);
+  const finalState = readDuetState();
+  const out = {
+    event: "duet-loop",
+    mode: "live",
+    tokenSpending: true,
+    startedAt,
+    endedAt: now(),
+    durationMs: Date.now() - startedMs,
+    stopReasons,
+    status: finalState.status,
+    steps,
+    verifierRuns,
+    counts: {
+      rounds: steps.length,
+      codexSteps,
+      minimaxSteps,
+    },
+    usage: {
+      estimatedInputTokens: totalEstimatedInputTokens,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+    },
+    limits: {
+      maxRounds,
+      maxCodexSteps,
+      maxMiniMaxSteps,
+      maxTokens,
+      maxPacketChars,
+    },
+    state: raw ? finalState : publicDuetState(finalState),
+  };
+  appendJsonl(ledgerPath, out);
+  appendJsonl(outboxPath, out);
+  printJson(out);
 }
 
 function appendDuetJournal(markdown) {
@@ -3887,7 +4056,10 @@ async function duetCommand(args) {
     if (rest.includes("--dry-run")) return duetStepDryRun(rest);
     return await withDuetLockAsync(() => duetStepLive(rest));
   }
-  if (subcommand === "loop") return duetLoopDryRun(rest);
+  if (subcommand === "loop") {
+    if (rest.includes("--dry-run")) return duetLoopDryRun(rest);
+    return await withDuetLockAsync(() => duetLoopLive(rest));
+  }
   if (subcommand === "transcript") {
     const [action, ...actionRest] = rest;
     if (action === "export") return duetTranscriptExport(actionRest);

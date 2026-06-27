@@ -42,6 +42,7 @@ node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
+node .\bridge.mjs duet loop --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier .\verify.mjs
 npm run test:release
@@ -68,8 +69,8 @@ Safety notes:
   expected root and catches wrong-shell context before `duet`, `ask`,
   `mvs-send --task`, or `--long-prompt` inputs run.
 - `ask`, `canary`, `mvs-send`, `duet step --agent minimax --yes`,
-  `duet step --agent codex --yes`, and full `optimize-check` require `--yes`
-  because they start a model or agent turn.
+  `duet step --agent codex --yes`, `duet loop --yes`, and full
+  `optimize-check` require `--yes` because they start a model or agent turn.
 - Prefer `mvs-send --task`; inline `--content` also requires
   `--allow-inline-content` because shells can retain command history.
 - `--long-prompt` is opt-in because it intentionally spends more tokens.

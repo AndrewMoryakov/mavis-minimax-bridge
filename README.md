@@ -299,17 +299,23 @@ same hardened `duet pass` validation, and redact the answer in stdout unless
 `--raw` is passed. If apply fails, the baton is not advanced and the pending
 `.local.md` handoff path is reported for manual recovery.
 
-Preview a future autonomous loop without spending tokens:
+Preview or run a bounded autonomous loop:
 
 ```powershell
 node .\bridge.mjs duet loop --dry-run --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
 ```
 
 `duet loop --dry-run` is a Phase 5C preflight. It does not run Codex, MiniMax,
 or a verifier. It reports whether the current relay can continue, which agent
 would act next, estimated input tokens, loop limits, verifier configuration,
-and stop reasons such as terminal status or token budget. `duet loop --yes` is
-not implemented yet.
+and stop reasons such as terminal status or token budget.
+
+`duet loop --yes` is token-spending. It alternates the current baton holder
+through the same hardened `duet step --agent <agent> --yes` path, optionally
+runs a verifier between running steps, and stops on `done`, `human_escalation`,
+max rounds, step limits, token budget, repeated handoff hash, apply failure, or
+verifier failure.
 
 Run a local verifier through the bridge:
 
@@ -354,8 +360,8 @@ Operational rules:
 - `--max-iterations` is a safety limit; when reached, the relay stops with
   `human_escalation`.
 - Duet commands are local-only except for explicit
-  `duet step --agent minimax --yes` and `duet step --agent codex --yes`, which
-  can call an agent and spend tokens.
+  `duet step --agent minimax --yes`, `duet step --agent codex --yes`, and
+  `duet loop --yes`, which can call agents and spend tokens.
 - Duet Relay does not wake, message, or activate the other agent automatically.
 
 Rules for agents:
@@ -412,6 +418,7 @@ node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
+node .\bridge.mjs duet loop --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier .\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md

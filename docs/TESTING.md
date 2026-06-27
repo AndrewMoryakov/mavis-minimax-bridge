@@ -47,6 +47,8 @@ Covered areas:
   apply, redacted default output, usage reporting, and baton transfer to MiniMax.
 - `duet loop --dry-run` local preflight: next-agent preview, token budget stop,
   terminal stop, verifier config, redaction, and no runtime-file mutation.
+- `duet loop --yes` offline fake-agent path: successful terminal completion,
+  repeated-handoff stop, verifier failure stop, redaction, and summary counts.
 - Redacted and raw `duet transcript export`, including Markdown output and raw
   output path protection.
 - `duet verify` verifier execution, redacted/raw output, non-zero exit codes,
@@ -82,6 +84,7 @@ Token-spending commands are intentionally not covered by the offline suite:
 - `optimize-check` without `--skip-canary`
 - real `duet step --agent minimax --yes` model calls
 - real `duet step --agent codex --yes` Codex CLI calls
+- real `duet loop --yes` autonomous model/agent calls
 
 Run those only as explicit manual checks after user approval. Offline `duet
 step --agent minimax --yes` and `duet step --agent codex --yes` tests use an

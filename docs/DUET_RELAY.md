@@ -202,6 +202,6 @@ Goal, handoff, and note files are limited to 20000 characters each. The relay is
 for compact handoffs, not archival dumps. `duet pass --handoff` accepts only
 regular files inside the bridge root.
 
-Duet commands are local-only except for explicit
-`duet step --agent minimax --yes`, which calls MiniMax through the review-only
-path and can spend tokens.
+Duet commands are local-only except for explicit `duet step --agent minimax
+--yes`, `duet step --agent codex --yes`, and `duet loop --yes`, which can call
+agents and spend tokens.

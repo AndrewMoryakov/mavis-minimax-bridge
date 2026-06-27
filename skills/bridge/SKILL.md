@@ -26,8 +26,9 @@ Always run commands from that directory.
   `duet step --dry-run`, `duet loop --dry-run`, `duet pass`, and `duet note` are local-only
   coordination commands. They do not call an agent.
 - `ask`, `canary`, `optimize-check` without `--skip-canary`, `mvs-send`, and
-  `duet step --agent minimax --yes` / `duet step --agent codex --yes` can spend
-  tokens. Ask for explicit user approval before running them.
+  `duet step --agent minimax --yes` / `duet step --agent codex --yes` /
+  `duet loop --yes` can spend tokens. Ask for explicit user approval before
+  running them.
 - Never send to a burned or denied `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
 - `ask` automatically attaches bounded local Git source context for dirty
@@ -64,6 +65,7 @@ node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
+node .\bridge.mjs duet loop --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 ```
@@ -232,9 +234,21 @@ Run:
 node .\bridge.mjs duet loop --dry-run
 ```
 
-Previews the future autonomous loop without spending tokens. It reports stop
-reasons, next agent, token estimate, limits, and optional verifier configuration.
-`duet loop --yes` is not implemented yet.
+Previews the autonomous loop without spending tokens. It reports stop reasons,
+next agent, token estimate, limits, and optional verifier configuration.
+
+### `/bridge duet loop`
+
+Run only after explicit token-spending approval:
+
+```powershell
+node .\bridge.mjs duet loop --yes
+```
+
+Runs a bounded autonomous loop, alternating the current baton holder through
+hardened `duet step --agent <agent> --yes`, optionally running a verifier between
+running steps, and stopping on terminal status, limits, token budget, repeated
+handoff hash, apply failure, or verifier failure.
 
 ### `/bridge duet transcript export`
 
