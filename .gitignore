@@ -9,6 +9,9 @@
 /duet-journal.md.*.tmp
 *.local.*
 /examples/duet-simple-orders/answer.json
+/examples/duet-tetris-browser/index.html
+/examples/duet-tetris-browser/styles.css
+/examples/duet-tetris-browser/game.js
 node_modules/
 .env
 .DS_Store

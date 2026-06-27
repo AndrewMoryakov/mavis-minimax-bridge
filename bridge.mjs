@@ -36,6 +36,8 @@ function defaultConfig() {
     tinyCanaryInputEstimateTokens: 12000,
     maxLongPromptChars: 160000,
     maxLongPromptRepeats: 3,
+    askSourceContextMode: "auto",
+    askMaxSourceContextChars: 24000,
     asciiConsole: true,
     denySessions: [],
     env: {
@@ -115,7 +117,7 @@ function usage() {
   node .\\bridge.mjs canary-estimate [--long-prompt <file>] [--repeat-long <n>]
   node .\\bridge.mjs canary --yes [--port <port>]
   node .\\bridge.mjs optimize-check [--yes] [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
-  node .\\bridge.mjs ask --yes --mode review-only --task <file> [--task <followup-file> ...] [--port <port>]
+  node .\\bridge.mjs ask --yes --mode review-only --task <file> [--task <followup-file> ...] [--source-context auto|off] [--dry-run] [--port <port>]
   node .\\bridge.mjs mvs-status [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-peers [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
@@ -269,6 +271,10 @@ function estimateInputTokensForText(text) {
   return Math.ceil(Buffer.byteLength(String(text || ""), "utf8") / 4);
 }
 
+function sha256(text) {
+  return createHash("sha256").update(String(text || "")).digest("hex");
+}
+
 function assertTaskBudget(tasks) {
   const maxTurns = Number(config.maxTurns || 3);
   if (tasks.length > maxTurns) {
@@ -291,6 +297,137 @@ function assertTaskBudget(tasks) {
     maxInputTokens,
     maxTurns,
     maxChars,
+  };
+}
+
+function runGit(args, cwd = bridgeDir) {
+  return spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 16,
+  });
+}
+
+function safeGitText(result) {
+  return `${result.stdout || ""}${result.stderr ? `\n[stderr]\n${result.stderr}` : ""}`.trim();
+}
+
+function appendBounded(parts, title, text, budget) {
+  if (!text || budget.remaining <= 0) return;
+  const blockPrefix = `\n\n## ${title}\n\n`;
+  const available = budget.remaining - blockPrefix.length;
+  if (available <= 0) {
+    budget.truncated = true;
+    return;
+  }
+  let body = text;
+  if (body.length > available) {
+    body = `${body.slice(0, Math.max(0, available - 80))}\n\n[truncated: source context character budget reached]`;
+    budget.truncated = true;
+  }
+  parts.push(`${blockPrefix}${body}`);
+  budget.remaining -= blockPrefix.length + body.length;
+}
+
+function isProbablyText(buffer) {
+  const sample = buffer.subarray(0, Math.min(buffer.length, 8000));
+  return !sample.includes(0);
+}
+
+function listUntrackedPaths(repoRoot) {
+  const result = runGit(["ls-files", "--others", "--exclude-standard", "-z"], repoRoot);
+  if (result.status !== 0) {
+    return [];
+  }
+  return String(result.stdout || "")
+    .split("\0")
+    .filter((entry) => entry.length > 0);
+}
+
+function readUntrackedSnippet(repoRoot, relativePath, perFileLimit) {
+  const fullPath = path.resolve(repoRoot, relativePath);
+  const rootWithSep = repoRoot.endsWith(path.sep) ? repoRoot : `${repoRoot}${path.sep}`;
+  if (!fullPath.startsWith(rootWithSep)) {
+    return `### ${relativePath}\n\n[skipped: path escapes repository root]`;
+  }
+  if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+    return `### ${relativePath}\n\n[skipped: not a regular file]`;
+  }
+  const buffer = fs.readFileSync(fullPath);
+  if (!isProbablyText(buffer)) {
+    return `### ${relativePath}\n\n[skipped: binary-looking file, ${buffer.length} bytes]`;
+  }
+  const text = buffer.toString("utf8");
+  const truncated = text.length > perFileLimit;
+  const body = truncated ? `${text.slice(0, perFileLimit)}\n\n[truncated: file is ${text.length} chars]` : text;
+  return `### ${relativePath}\n\n\`\`\`\n${body}\n\`\`\``;
+}
+
+function buildAskSourceContext(args, taskPaths = []) {
+  const mode = argValue(args, "--source-context", config.askSourceContextMode || "auto");
+  if (!["auto", "off"].includes(mode)) {
+    throw new Error("--source-context must be auto or off");
+  }
+  const maxChars = Number(argValue(args, "--source-context-chars", String(config.askMaxSourceContextChars ?? 24000)));
+  if (!Number.isFinite(maxChars) || maxChars < 0 || maxChars > 200000) {
+    throw new Error("--source-context-chars must be a number from 0 to 200000");
+  }
+  if (mode === "off" || maxChars === 0) {
+    return { mode, included: false, reason: mode === "off" ? "disabled" : "zero budget", chars: 0, truncated: false, text: "" };
+  }
+
+  const rootResult = runGit(["rev-parse", "--show-toplevel"]);
+  if (rootResult.status !== 0) {
+    return { mode, included: false, reason: "not a git repository", chars: 0, truncated: false, text: "" };
+  }
+  const repoRoot = path.resolve(String(rootResult.stdout || "").trim());
+  const statusResult = runGit(["status", "--porcelain=v1", "--untracked-files=all"], repoRoot);
+  const statusText = safeGitText(statusResult);
+  if (statusResult.status !== 0 || !statusText.trim()) {
+    return {
+      mode,
+      included: false,
+      reason: statusResult.status !== 0 ? "git status failed" : "clean worktree",
+      chars: 0,
+      truncated: false,
+      text: "",
+      repoRoot,
+    };
+  }
+
+  const parts = [
+    "MiniMax source visibility context.",
+    "The reviewer may not have direct access to this local worktree; use this bounded context as the source of truth for uncommitted changes.",
+  ];
+  const wrapperReserve = 120;
+  const budget = { remaining: Math.max(0, maxChars - parts.join("\n").length - wrapperReserve), truncated: false };
+
+  appendBounded(parts, "git status --short", statusText, budget);
+  appendBounded(parts, "git diff --stat", safeGitText(runGit(["diff", "--stat"], repoRoot)), budget);
+
+  const excluded = new Set(taskPaths.map((taskPath) => path.resolve(taskPath).toLowerCase()));
+  const untracked = listUntrackedPaths(repoRoot)
+    .filter((relativePath) => !excluded.has(path.resolve(repoRoot, relativePath).toLowerCase()));
+  if (untracked.length > 0) {
+    const perFileLimit = Math.max(1200, Math.min(6000, Math.floor(maxChars / Math.max(2, untracked.length))));
+    const snippets = untracked.map((relativePath) => readUntrackedSnippet(repoRoot, relativePath, perFileLimit)).join("\n\n");
+    appendBounded(parts, "untracked text file snippets", snippets, budget);
+  }
+
+  appendBounded(parts, "git diff --cached", safeGitText(runGit(["diff", "--cached", "--no-ext-diff", "--"], repoRoot)), budget);
+  appendBounded(parts, "git diff", safeGitText(runGit(["diff", "--no-ext-diff", "--"], repoRoot)), budget);
+
+  const text = `<source_context mode="${mode}" chars="${maxChars}" truncated="${budget.truncated}">\n${parts.join("\n")}\n</source_context>`;
+  return {
+    mode,
+    included: true,
+    reason: "dirty worktree",
+    repoRoot,
+    chars: text.length,
+    maxChars,
+    truncated: budget.truncated,
+    untrackedCount: untracked.length,
+    text,
   };
 }
 
@@ -851,6 +988,8 @@ function publicConfigSummary() {
     tinyCanaryInputEstimateTokens: config.tinyCanaryInputEstimateTokens,
     maxLongPromptChars: config.maxLongPromptChars,
     maxLongPromptRepeats: config.maxLongPromptRepeats,
+    askSourceContextMode: config.askSourceContextMode,
+    askMaxSourceContextChars: config.askMaxSourceContextChars,
     asciiConsole: config.asciiConsole,
     denySessionsCount: config.denySessions.length,
     mode: modeState(),
@@ -893,6 +1032,8 @@ function setConfigKey(key, value) {
     "tinyCanaryInputEstimateTokens",
     "maxLongPromptChars",
     "maxLongPromptRepeats",
+    "askSourceContextMode",
+    "askMaxSourceContextChars",
     "asciiConsole",
   ]);
   const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };
@@ -929,6 +1070,10 @@ function validateConfig(configObject) {
   validateNumberRange(configObject, "tinyCanaryInputEstimateTokens", 1, 1000000);
   validateNumberRange(configObject, "maxLongPromptChars", 100, 1000000);
   validateNumberRange(configObject, "maxLongPromptRepeats", 1, 10);
+  validateNumberRange(configObject, "askMaxSourceContextChars", 0, 200000);
+  if (!["auto", "off"].includes(String(configObject.askSourceContextMode || "auto"))) {
+    throw new Error("askSourceContextMode must be auto or off");
+  }
   if (typeof configObject.defaultModel !== "string" || !configObject.defaultModel.trim()) {
     throw new Error("defaultModel must be a non-empty string");
   }
@@ -1430,7 +1575,11 @@ async function optimizeCheckCommand(args) {
 }
 
 async function askCommand(args) {
-  requireSpendingApproval(args, "ask");
+  const dryRun = args.includes("--dry-run");
+  const raw = args.includes("--raw");
+  if (!dryRun) {
+    requireSpendingApproval(args, "ask");
+  }
   const mode = argValue(args, "--mode", "review-only");
   if (!["review-only", "patch-proposal"].includes(mode)) {
     throw new Error(`unsupported mode: ${mode}`);
@@ -1441,7 +1590,48 @@ async function askCommand(args) {
     taskPath: path.resolve(taskPath),
     text: fs.readFileSync(path.resolve(taskPath), "utf8"),
   }));
-  const preflight = assertTaskBudget(tasks);
+  const sourceContext = buildAskSourceContext(args, tasks.map((task) => task.taskPath));
+  const promptTasks = tasks.map((task, index) => ({
+    ...task,
+    promptText: index === 0 && sourceContext.included ? `${task.text}\n\n${sourceContext.text}` : task.text,
+  }));
+  const preflight = assertTaskBudget(promptTasks.map((task) => ({ taskPath: task.taskPath, text: task.promptText })));
+  const sourceContextSummary = {
+    mode: sourceContext.mode,
+    included: sourceContext.included,
+    reason: sourceContext.reason,
+    chars: sourceContext.chars,
+    maxChars: sourceContext.maxChars || null,
+    truncated: sourceContext.truncated,
+    untrackedCount: sourceContext.untrackedCount || 0,
+    repoRoot: sourceContext.repoRoot || null,
+  };
+  if (dryRun) {
+    const prompts = promptTasks.map((task, index) => {
+      const text = mode === "review-only"
+        ? `Review only. Do not edit files. Answer concisely.\n\n${task.promptText}`
+        : `Propose a unified diff only. Do not apply it.\n\n${task.promptText}`;
+      return {
+        index: index + 1,
+        taskPath: task.taskPath,
+        chars: text.length,
+        sha256: sha256(text),
+        text: raw ? text : undefined,
+      };
+    });
+    return printJson({
+      event: "ask-dry-run",
+      mode,
+      raw,
+      taskPath: tasks[0].taskPath,
+      taskPaths: tasks.map((task) => task.taskPath),
+      turnsRequested: tasks.length,
+      chars: promptTasks.reduce((sum, task) => sum + task.promptText.length, 0),
+      preflight,
+      sourceContext: raw ? { ...sourceContextSummary, text: sourceContext.text } : sourceContextSummary,
+      prompts,
+    });
+  }
   const server = await selectServer(args);
   const envelope = {
     event: "ask",
@@ -1451,8 +1641,9 @@ async function askCommand(args) {
     taskPath: tasks[0].taskPath,
     taskPaths: tasks.map((task) => task.taskPath),
     turnsRequested: tasks.length,
-    chars: tasks.reduce((sum, task) => sum + task.text.length, 0),
+    chars: promptTasks.reduce((sum, task) => sum + task.promptText.length, 0),
     preflight,
+    sourceContext: sourceContextSummary,
   };
   appendJsonl(inboxPath, envelope);
 
@@ -1461,11 +1652,11 @@ async function askCommand(args) {
   const turns = [];
   const timeoutSec = config.maxWallClockSec || 180;
   let lastResponseTruncated = false;
-  for (let index = 0; index < tasks.length; index += 1) {
-    const task = tasks[index];
+  for (let index = 0; index < promptTasks.length; index += 1) {
+    const task = promptTasks[index];
     const prompt = mode === "review-only"
-      ? `Review only. Do not edit files. Answer concisely.\n\n${task.text}`
-      : `Propose a unified diff only. Do not apply it.\n\n${task.text}`;
+      ? `Review only. Do not edit files. Answer concisely.\n\n${task.promptText}`
+      : `Propose a unified diff only. Do not apply it.\n\n${task.promptText}`;
     const result = await sendPrompt(server.port, session.id, prompt, {
       timeoutSec,
       role: "main",
@@ -1478,7 +1669,7 @@ async function askCommand(args) {
     turns.push({
       index: index + 1,
       taskPath: task.taskPath,
-      chars: task.text.length,
+      chars: task.promptText.length,
       ...summary,
       answer: answer.slice(-12000),
     });

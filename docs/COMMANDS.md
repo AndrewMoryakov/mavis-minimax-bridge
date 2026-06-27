@@ -245,6 +245,7 @@ These commands can spend tokens:
 node .\bridge.mjs ask --yes --mode review-only --task .\task.md
 node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
 node .\bridge.mjs ask --yes --mode patch-proposal --task .\task.md
+node .\bridge.mjs ask --dry-run --raw --task .\task.md
 node .\bridge.mjs mvs-send --session mvs_<id> --task .\task.md --yes
 node .\bridge.mjs mvs-send --session mvs_<id> --content "short prompt" --allow-inline-content --yes
 ```
@@ -253,6 +254,11 @@ Prefer `review-only` first. `mvs-send` requires `--yes` because it posts into a
 target Mavis session. Repeated `--task` values on `ask` are sent as follow-up
 turns in one temporary `ses_...` session and each turn is recorded in the local
 ledger/outbox.
+`ask` automatically attaches a bounded local source context when the Git
+worktree is dirty. The context includes `git status`, diff output, and text
+snippets for untracked files so MiniMax can review changes that are not visible
+in its own session. Use `--source-context off` to disable this, or
+`--dry-run --raw` to inspect the assembled prompt without starting a model turn.
 Prefer `mvs-send --task` over `--content`; inline content can be captured by
 shell history or process inspection.
 

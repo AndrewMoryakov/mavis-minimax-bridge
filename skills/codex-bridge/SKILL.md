@@ -29,6 +29,9 @@ Always run commands from the repository root.
 - Ask for explicit user approval before running token-spending commands.
 - Never send to a burned, denied, or guessed `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
+- `ask` automatically attaches bounded local Git source context for dirty
+  worktrees. Use `--source-context off` only when local source must not be sent,
+  and `--dry-run --raw` to inspect the assembled prompt without spending tokens.
 - Keep task files compact and focused.
 - Duet commands redact relay text by default; use `--raw` only when the user
   intentionally needs local goal, handoff, or journal text in stdout.
@@ -145,6 +148,14 @@ Use a task file for review-only collaboration:
 
 ```powershell
 node .\bridge.mjs ask --yes --mode review-only --task path\to\task.md
+```
+
+By default, `ask` attaches `git status`, diffs, and text snippets for untracked
+files so MiniMax can review local changes it cannot otherwise see. Inspect this
+without spending tokens:
+
+```powershell
+node .\bridge.mjs ask --dry-run --raw --task path\to\task.md
 ```
 
 Use repeated `--task` arguments for a compact multi-turn review:

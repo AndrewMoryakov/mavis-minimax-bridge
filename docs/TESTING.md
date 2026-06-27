@@ -41,11 +41,14 @@ Covered areas:
 - Lock cleanup after failed mutating commands.
 - Safe local commands: `help`, `config show`, `mode list`, `session show`,
   `deny-session list`, `token-stats --ledger`.
+- `ask --dry-run` source-context packaging for dirty Git worktrees.
 - `state` visibility for Duet runtime files.
 - `.gitignore` coverage for runtime files and duet atomic temp files.
 - Installable skill and prompt surfaces documenting Duet Relay.
 - Duet acceptance harness for `examples/duet-simple-orders`, using fake agents
   and the real local `duet` commands.
+- Browser Tetris acceptance harness for `examples/duet-tetris-browser`, using
+  fake agents and a mocked browser runtime.
 
 Token-spending commands are intentionally not covered by the offline suite:
 
@@ -60,3 +63,8 @@ For a live two-agent smoke test, see
 [`docs/DUET_ACCEPTANCE_TEST.md`](DUET_ACCEPTANCE_TEST.md). The live test uses
 the same verifier but requires the human to open the other agent surface when
 the baton is passed.
+
+For a larger browser-game smoke test, see
+[`docs/DUET_TETRIS_BROWSER_TEST.md`](DUET_TETRIS_BROWSER_TEST.md).
+It includes both a minimal "Сделай тетрис" start and a directed acceptance
+start.

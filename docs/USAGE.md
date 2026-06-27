@@ -30,6 +30,7 @@ node .\bridge.mjs optimize-check --skip-canary
 node .\bridge.mjs optimize-check --yes --session mvs_<id>
 node .\bridge.mjs optimize-check --yes --long-prompt .\stable-prefix.txt
 node .\bridge.mjs ask --yes --mode review-only --task .\task.md
+node .\bridge.mjs ask --dry-run --raw --task .\task.md
 node .\bridge.mjs duet init --goal .\duet-goal.local.md
 node .\bridge.mjs duet show
 npm run test:release

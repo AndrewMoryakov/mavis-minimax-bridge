@@ -21,6 +21,8 @@ Rules:
 - Use token-spending commands only after explicit user approval.
 - Never send to a guessed, burned, denied, or expensive `mvs_...` session.
 - Prefer review-only collaboration before asking MiniMax for patch proposals.
+- `ask` attaches bounded local Git source context for dirty worktrees by
+  default; use `--dry-run --raw` to inspect it without spending tokens.
 - Duet Relay commands are local-only. Use them for baton-passing state, not for
   sending prompts to MiniMax.
 - Duet Relay does not wake, message, or activate the other agent automatically.

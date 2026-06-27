@@ -28,6 +28,9 @@ Always run commands from that directory.
   can spend tokens. Ask for explicit user approval before running them.
 - Never send to a burned or denied `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
+- `ask` automatically attaches bounded local Git source context for dirty
+  worktrees. Use `--source-context off` only when local source must not be sent,
+  and `--dry-run --raw` to inspect the assembled prompt without spending tokens.
 - Keep prompts compact. For multi-turn bridge review, use a small task file
   plus 2-3 focused follow-up task files.
 - Duet commands redact relay text by default; use `--raw` only when the user
@@ -210,6 +213,12 @@ For guided review with task files supplied by the user:
 
 ```powershell
 node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
+```
+
+Inspect the prompt and attached source context without spending tokens:
+
+```powershell
+node .\bridge.mjs ask --dry-run --raw --task path\to\task.md
 ```
 
 ### `/bridge send mvs_<id>`

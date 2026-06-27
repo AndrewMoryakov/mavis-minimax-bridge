@@ -56,6 +56,15 @@ function fails(result, pattern) {
   assert.match(result.text, pattern);
 }
 
+function git(dir, args) {
+  const result = spawnSync("git", args, {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, `${args.join(" ")}\n${result.stdout}${result.stderr}`);
+  return result;
+}
+
 test("duet lifecycle redacts by default and exposes text only with --raw", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_DUET_TEST_123";
@@ -246,6 +255,46 @@ test("safe local commands work in an isolated runtime directory", (t) => {
   assert.equal(ok(runBridge(dir, ["session", "show"])).event, "session");
   assert.equal(ok(runBridge(dir, ["deny-session", "list"])).event, "deny-session");
   assert.equal(ok(runBridge(dir, ["token-stats", "--ledger", "--lines", "5"])).event, "token-stats");
+});
+
+test("ask dry-run attaches dirty worktree source context by default", (t) => {
+  const dir = sandbox(t);
+  git(dir, ["init"]);
+  git(dir, ["config", "user.email", "test@example.invalid"]);
+  git(dir, ["config", "user.name", "Bridge Test"]);
+  writeFile(dir, "tracked.txt", "before\n");
+  git(dir, ["add", "bridge.mjs", "tracked.txt"]);
+  git(dir, ["commit", "-m", "seed"]);
+
+  writeFile(dir, "task.md", "Review local changes.");
+  writeFile(dir, "tracked.txt", "before\nafter\n");
+  writeFile(dir, "new-feature.txt", "UNTRACKED_SOURCE_VISIBILITY_SENTINEL\n");
+  writeFile(dir, "unicode-\u03a9-source.txt", "UNICODE_UNTRACKED_SENTINEL\n");
+
+  const dryRun = ok(runBridge(dir, ["ask", "--dry-run", "--mode", "review-only", "--task", "task.md", "--raw"]));
+  assert.equal(dryRun.event, "ask-dry-run");
+  assert.equal(dryRun.sourceContext.included, true);
+  assert.equal(dryRun.sourceContext.reason, "dirty worktree");
+  assert.equal(dryRun.sourceContext.untrackedCount, 2);
+  assert.match(dryRun.sourceContext.text, /git status --short/);
+  assert.match(dryRun.sourceContext.text, /tracked\.txt/);
+  assert.match(dryRun.sourceContext.text, /new-feature\.txt/);
+  assert.match(dryRun.sourceContext.text, /UNTRACKED_SOURCE_VISIBILITY_SENTINEL/);
+  assert.match(dryRun.sourceContext.text, /UNICODE_UNTRACKED_SENTINEL/);
+  assert.match(dryRun.prompts[0].text, /<source_context/);
+});
+
+test("ask dry-run can disable source context", (t) => {
+  const dir = sandbox(t);
+  git(dir, ["init"]);
+  writeFile(dir, "task.md", "Review without source context.");
+  writeFile(dir, "untracked.txt", "SHOULD_NOT_APPEAR\n");
+
+  const dryRun = ok(runBridge(dir, ["ask", "--dry-run", "--mode", "review-only", "--task", "task.md", "--source-context", "off", "--raw"]));
+  assert.equal(dryRun.sourceContext.included, false);
+  assert.equal(dryRun.sourceContext.reason, "disabled");
+  assert.doesNotMatch(dryRun.prompts[0].text, /<source_context/);
+  assert.doesNotMatch(JSON.stringify(dryRun), /SHOULD_NOT_APPEAR/);
 });
 
 test("state command reports duet runtime files when they exist", (t) => {

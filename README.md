@@ -173,12 +173,19 @@ Use for collaboration:
 ```powershell
 node .\bridge.mjs ask --yes --mode review-only --task .\task.md
 node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
+node .\bridge.mjs ask --dry-run --raw --task .\task.md
 node .\bridge.mjs mvs-send --session mvs_<id> --task .\task.md --yes
 ```
 
 Repeated `--task` values are sent as follow-up turns in one temporary
 `ses_...` session. Use this for guided reviews where MiniMax needs a few compact
 questions to discover problems.
+
+By default, `ask` attaches a bounded source context from the local Git worktree:
+`git status`, staged/unstaged diff, and text snippets for untracked files. This
+helps MiniMax review local changes it cannot otherwise see. Use
+`--source-context off` for prompts that must not include local source, or
+`--dry-run --raw` to inspect the assembled prompt without spending tokens.
 
 For longer Codex and MiniMax collaboration, keep orchestration thin. The minimal
 baton-passing convention is documented in [`docs/DUET_RELAY.md`](docs/DUET_RELAY.md).
@@ -301,6 +308,7 @@ node .\bridge.mjs optimize-check --yes --session mvs_<id>
 node .\bridge.mjs optimize-check --yes --long-prompt path\to\stable-prefix.txt
 node .\bridge.mjs ask --yes --mode review-only --task path\to\task.md
 node .\bridge.mjs ask --yes --mode review-only --task .\q1.md --task .\q2.md --task .\q3.md
+node .\bridge.mjs ask --dry-run --raw --task path\to\task.md
 node .\bridge.mjs mvs-status --session mvs_<id>
 node .\bridge.mjs mvs-peers --session mvs_<id>
 node .\bridge.mjs mvs-messages --session mvs_<id> --limit 5
@@ -328,11 +336,15 @@ checkout.
 Covered areas include Duet lifecycle, redacted output, `--raw`, lock handling,
 damaged runtime state, oversized handoffs, `.gitignore` coverage, safe local
 commands, installable skill/prompt surfaces, and the fake-agent Duet acceptance
-harness in `examples/duet-simple-orders`. Token-spending commands are not
-exercised by automated tests.
+harnesses in `examples/duet-simple-orders` and
+`examples/duet-tetris-browser`. Token-spending commands are not exercised by
+automated tests.
 
 See [docs/TESTING.md](docs/TESTING.md) for details. For a live Codex/MiniMax
-smoke test, see [docs/DUET_ACCEPTANCE_TEST.md](docs/DUET_ACCEPTANCE_TEST.md).
+smoke test, see [docs/DUET_ACCEPTANCE_TEST.md](docs/DUET_ACCEPTANCE_TEST.md)
+or [docs/DUET_TETRIS_BROWSER_TEST.md](docs/DUET_TETRIS_BROWSER_TEST.md). The
+Tetris smoke includes a minimal "Сделай тетрис" start where the agents decide
+their own plan, roles, checks, and baton handoff.
 
 GUI slash skill equivalents after `npm run install:skill`:
 
