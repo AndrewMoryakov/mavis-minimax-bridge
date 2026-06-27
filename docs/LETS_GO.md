@@ -10,6 +10,11 @@ let's go
 
 The agent should then run the local Duet Relay setup itself.
 
+Important: Duet Relay records the baton and shared state. It does not wake,
+message, or activate the other agent automatically. To continue on the other
+side, open that agent's surface and ask it to continue the current Duet Relay,
+or explicitly approve a separate token-spending `ask` / `mvs-send` step.
+
 ## Prompt To Codex Or MiniMax
 
 ```text
@@ -74,6 +79,7 @@ node .\bridge.mjs duet pass --from codex --status human_escalation --handoff .\h
 
 - Duet commands are local-only.
 - They do not call MiniMax and do not spend tokens.
+- Duet Relay does not wake, message, or activate the other agent automatically.
 - Sending a prompt to MiniMax still requires explicit use of `ask` or `mvs-send`
   and explicit user approval.
 - Default Duet output is redacted. Use `--raw` only when the user explicitly

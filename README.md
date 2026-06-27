@@ -207,6 +207,10 @@ let's go
 See [docs/LETS_GO.md](docs/LETS_GO.md) for the agent-side behavior behind this
 prompt.
 
+Important: Duet Relay records the baton and shared state. It does not wake,
+message, or activate the other agent automatically. Continue from the other
+agent's surface, or explicitly approve a separate `ask` / `mvs-send` step.
+
 Initialize a relay from a local goal file:
 
 ```powershell
@@ -257,6 +261,7 @@ Operational rules:
   `human_escalation`.
 - Duet commands are local-only and do not call MiniMax. Sending work to MiniMax
   remains an explicit separate step through `ask` or `mvs-send`.
+- Duet Relay does not wake, message, or activate the other agent automatically.
 
 Rules for agents:
 

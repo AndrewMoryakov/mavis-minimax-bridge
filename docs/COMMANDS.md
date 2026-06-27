@@ -288,6 +288,9 @@ intentionally need local relay text in stdout.
 For the simplest user flow, describe the task to Codex or MiniMax and end with
 `let's go`. See [LETS_GO.md](LETS_GO.md).
 
+Duet Relay records baton state locally. It does not wake, message, or activate
+the other agent automatically.
+
 ## Logs
 
 ```powershell

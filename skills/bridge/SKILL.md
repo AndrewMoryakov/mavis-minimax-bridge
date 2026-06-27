@@ -190,6 +190,10 @@ Expected behavior:
 Do not run token-spending commands as part of `let's go` unless the user
 explicitly approves that separate action.
 
+Duet Relay records the baton and shared state. It does not wake, message, or
+activate the other agent automatically. To continue on Codex's side, the user
+must open Codex or explicitly approve a separate bridge send step.
+
 ### `/bridge ask`
 
 Requires explicit user approval because it starts a model turn. Use a task file.

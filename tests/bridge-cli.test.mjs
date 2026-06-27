@@ -207,5 +207,6 @@ test("installable skill and prompt surfaces document duet relay", () => {
   for (const relative of ["skills/bridge/SKILL.md", "skills/codex-bridge/SKILL.md", "prompts/bridge.md", "docs/LETS_GO.md"]) {
     const text = fs.readFileSync(path.join(repoRoot, relative), "utf8");
     assert.match(text, /let's go/, `${relative} should document the natural-language start`);
+    assert.match(text, /does not wake, message, or\s+activate/, `${relative} should clarify that relay does not auto-activate the other agent`);
   }
 });

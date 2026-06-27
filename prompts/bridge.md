@@ -23,6 +23,7 @@ Rules:
 - Prefer review-only collaboration before asking MiniMax for patch proposals.
 - Duet Relay commands are local-only. Use them for baton-passing state, not for
   sending prompts to MiniMax.
+- Duet Relay does not wake, message, or activate the other agent automatically.
 - Duet output is redacted by default; use `--raw` only when the user explicitly
   needs local goal, handoff, or journal text in stdout.
 - Report the commands run, whether tokens were spent, warnings, and next action.
