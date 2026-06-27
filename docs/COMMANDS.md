@@ -9,6 +9,9 @@ turn and should be run only after user approval.
 node .\bridge.mjs status
 node .\bridge.mjs state
 node .\bridge.mjs config show
+npm run check
+npm run test:offline
+npm run test:release
 npm run install:skill
 npm run install:codex-skill
 npm run install:codex-slash
@@ -18,6 +21,8 @@ npm run install:codex-slash
 - `state`: inspect live server, runtime files, current modes, and recent ledger
   events.
 - `config show`: show effective bridge config plus redacted raw local config.
+- `test:offline`: run deterministic local tests without MiniMax model turns.
+- `test:release`: run syntax check, offline tests, and `git diff --check`.
 - `install:skill`: install the optional MiniMax slash-palette skill as
   `/bridge`.
 - `install:codex-skill`: install the optional Codex skill as

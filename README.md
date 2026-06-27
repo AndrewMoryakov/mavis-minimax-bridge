@@ -290,6 +290,26 @@ node .\bridge.mjs duet note --agent codex --note .\note.local.md
 node .\bridge.mjs tail
 ```
 
+## Testing
+
+Run the offline regression suite before publishing bridge changes:
+
+```powershell
+npm run test:release
+```
+
+This runs `node --check`, the Node `node:test` suite, and `git diff --check`.
+The test suite copies `bridge.mjs` into temporary directories, so it does not
+touch real `ledger.jsonl`, `duet-state.json`, or `duet-journal.md` in this
+checkout.
+
+Covered areas include Duet lifecycle, redacted output, `--raw`, lock handling,
+damaged runtime state, oversized handoffs, `.gitignore` coverage, safe local
+commands, and installable skill/prompt surfaces. Token-spending commands are
+not exercised by automated tests.
+
+See [docs/TESTING.md](docs/TESTING.md) for details.
+
 GUI slash skill equivalents after `npm run install:skill`:
 
 ```text
@@ -400,6 +420,8 @@ node .\bridge.mjs canary-estimate --long-prompt .\stable-prefix.local.txt --repe
 - [docs/DUET_RELAY.md](docs/DUET_RELAY.md): minimal baton-passing protocol for
   Codex and MiniMax.
 - [docs/RUNTIME_FILES.md](docs/RUNTIME_FILES.md): local runtime file contract.
+- [docs/TESTING.md](docs/TESTING.md): offline regression suite and release
+  checks.
 - [docs/USAGE.md](docs/USAGE.md): compact day-to-day usage sheet.
 - [docs/RESTORE_AFTER_UPDATE.md](docs/RESTORE_AFTER_UPDATE.md): restore
   checklist after MiniMax Code updates or reinstall.

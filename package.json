@@ -12,6 +12,9 @@
   },
   "scripts": {
     "check": "node --check ./bridge.mjs",
+    "test": "node --test",
+    "test:offline": "node --test tests/*.test.mjs",
+    "test:release": "npm run check && npm run test:offline && git diff --check",
     "init": "node ./scripts/init-runtime.mjs",
     "install:skill": "node ./scripts/install-mavis-skill.mjs",
     "install:codex-skill": "node ./scripts/install-codex-skill.mjs",
