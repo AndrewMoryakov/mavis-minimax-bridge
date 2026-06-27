@@ -78,8 +78,9 @@ node .\bridge.mjs duet pass --from codex --status human_escalation --handoff .\h
 ## Safety
 
 - Duet commands are local-only except for explicit
-  `duet step --agent minimax --yes`.
-- `duet step --agent minimax --yes` can call MiniMax and spend tokens; run it
+  `duet step --agent minimax --yes` and `duet step --agent codex --yes`.
+- `duet step --agent minimax --yes` can call MiniMax and
+  `duet step --agent codex --yes` can run a real Codex CLI turn; run either
   only after explicit approval.
 - Duet Relay does not wake, message, or activate the other agent automatically.
 - Sending arbitrary prompts to MiniMax still requires explicit use of `ask` or

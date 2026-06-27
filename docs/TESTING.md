@@ -1,7 +1,8 @@
 # Testing
 
 The default test suite is offline and deterministic. It does not call MiniMax,
-does not send prompts, and does not require a live `mvs_...` session.
+does not run real `codex exec` steps, does not send prompts, and does not
+require a live `mvs_...` session.
 
 Run all local release checks:
 
@@ -37,9 +38,13 @@ Covered areas:
   validation, and visible truncation.
 - `duet step --agent minimax --dry-run` baton/status validation, token estimate,
   redaction, raw prompt opt-in, and no ledger/model-call side effect.
+- `duet step --agent codex --dry-run` baton/status validation, token estimate,
+  redaction, Codex CLI settings, and no ledger/agent-call side effect.
 - `duet step --agent minimax --yes` offline fake-model path: successful handoff
   apply, redacted default output, pending handoff recovery on apply failure, and
   wrong-baton refusal before any model call.
+- `duet step --agent codex --yes` offline fake-agent path: successful handoff
+  apply, redacted default output, usage reporting, and baton transfer to MiniMax.
 - Redacted and raw `duet transcript export`, including Markdown output and raw
   output path protection.
 - `duet verify` verifier execution, redacted/raw output, non-zero exit codes,
@@ -74,10 +79,11 @@ Token-spending commands are intentionally not covered by the offline suite:
 - `canary`
 - `optimize-check` without `--skip-canary`
 - real `duet step --agent minimax --yes` model calls
+- real `duet step --agent codex --yes` Codex CLI calls
 
 Run those only as explicit manual checks after user approval. Offline `duet
-step --agent minimax --yes` tests use an internal fake model reply and do not
-send prompts.
+step --agent minimax --yes` and `duet step --agent codex --yes` tests use an
+internal fake reply and do not send prompts.
 
 For a live two-agent smoke test, see
 [`docs/DUET_ACCEPTANCE_TEST.md`](DUET_ACCEPTANCE_TEST.md). The live test uses

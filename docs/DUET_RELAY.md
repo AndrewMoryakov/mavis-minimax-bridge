@@ -152,27 +152,32 @@ node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\d
 Packets are derived views of relay state and journal content. They are not a
 new runtime artifact or state schema.
 
-Preview a future MiniMax step without spending tokens:
+Preview a future agent step without spending tokens:
 
 ```powershell
 node .\bridge.mjs duet step --agent minimax --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run
 ```
 
 The dry run validates baton ownership, status, iteration limits, packet size,
-route/model, and estimated input tokens. It does not call MiniMax or advance the
-relay.
+route/model or Codex CLI settings, and estimated input tokens. It does not call
+an agent or advance the relay.
 
-Run one real MiniMax step:
+Run one real agent step:
 
 ```powershell
 node .\bridge.mjs duet step --agent minimax --yes
+node .\bridge.mjs duet step --agent codex --yes
 ```
 
-`--yes` authorizes one review-only MiniMax model call and can spend tokens. The
-bridge stores the model answer as a pending `.local.md` handoff, applies it via
-the same hardened `duet pass` path, then returns the baton to Codex for
-`Status: running` replies or stops on `done` / `human_escalation`. If applying
-the handoff fails, state is not advanced and the pending path is returned.
+`--yes` authorizes one token-spending agent call. MiniMax steps use the
+review-only MiniMax path. Codex steps run a separate `codex exec` process with
+`--ignore-user-config`, `--ephemeral`, explicit `--cd`, `workspace-write`
+sandboxing, and a bridge timeout. The bridge stores the answer as a pending
+`.local.md` handoff, applies it via the same hardened `duet pass` path, then
+returns the baton to the other agent for `Status: running` replies or stops on
+`done` / `human_escalation`. If applying the handoff fails, state is not
+advanced and the pending path is returned.
 
 Pass the baton after a turn:
 

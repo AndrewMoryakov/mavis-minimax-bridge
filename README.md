@@ -272,28 +272,32 @@ from `duet-state.json` and `duet-journal.md`; they are not runtime state. Raw
 packet output requires explicit `--raw`, and raw file output must use a
 `.local.*` path inside the bridge root.
 
-Preview a future MiniMax step without spending tokens:
+Preview a future agent step without spending tokens:
 
 ```powershell
 node .\bridge.mjs duet step --agent minimax --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run
 ```
 
-`duet step --agent minimax --dry-run` validates relay status, baton ownership,
-iteration limits, packet size, route/model, and estimated input tokens. It does
-not call MiniMax, write a model handoff, or advance the baton.
+`duet step --dry-run` validates relay status, baton ownership, iteration limits,
+packet size, route/model or Codex CLI settings, and estimated input tokens. It
+does not call a model, write a handoff, or advance the baton.
 
-Run one real MiniMax relay step:
+Run one real relay step:
 
 ```powershell
 node .\bridge.mjs duet step --agent minimax --yes
+node .\bridge.mjs duet step --agent codex --yes
 ```
 
-`duet step --agent minimax --yes` is token-spending. It sends the bounded packet
-through the review-only model path, stores MiniMax's answer as a pending local
-handoff, applies it through the same hardened `duet pass` validation, and
-redacts the answer in stdout unless `--raw` is passed. If apply fails, the baton
-is not advanced and the pending `.local.md` handoff path is reported for manual
-recovery.
+`duet step --agent minimax --yes` is token-spending and sends the bounded packet
+through the review-only MiniMax path. `duet step --agent codex --yes` is also
+token-spending and runs a separate non-interactive `codex exec` process with
+`--ignore-user-config`, `--ephemeral`, explicit `--cd`, and a bridge timeout.
+Both commands store the answer as a pending local handoff, apply it through the
+same hardened `duet pass` validation, and redact the answer in stdout unless
+`--raw` is passed. If apply fails, the baton is not advanced and the pending
+`.local.md` handoff path is reported for manual recovery.
 
 Run a local verifier through the bridge:
 
@@ -338,7 +342,8 @@ Operational rules:
 - `--max-iterations` is a safety limit; when reached, the relay stops with
   `human_escalation`.
 - Duet commands are local-only except for explicit
-  `duet step --agent minimax --yes`, which can call MiniMax and spend tokens.
+  `duet step --agent minimax --yes` and `duet step --agent codex --yes`, which
+  can call an agent and spend tokens.
 - Duet Relay does not wake, message, or activate the other agent automatically.
 
 Rules for agents:
@@ -391,6 +396,9 @@ node .\bridge.mjs duet show
 node .\bridge.mjs duet next
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run
+node .\bridge.mjs duet step --agent minimax --yes
+node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier .\verify.mjs
 node .\bridge.mjs duet pass --from codex --to minimax --handoff .\handoff.local.md

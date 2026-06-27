@@ -38,7 +38,9 @@ node .\bridge.mjs duet show
 node .\bridge.mjs duet next
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
+node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier .\verify.mjs
 npm run test:release
@@ -64,8 +66,9 @@ Safety notes:
 - Run workspace-sensitive commands from the bridge root. `doctor` reports the
   expected root and catches wrong-shell context before `duet`, `ask`,
   `mvs-send --task`, or `--long-prompt` inputs run.
-- `ask`, `canary`, `mvs-send`, and full `optimize-check` require `--yes`
-  because they start a model turn.
+- `ask`, `canary`, `mvs-send`, `duet step --agent minimax --yes`,
+  `duet step --agent codex --yes`, and full `optimize-check` require `--yes`
+  because they start a model or agent turn.
 - Prefer `mvs-send --task`; inline `--content` also requires
   `--allow-inline-content` because shells can retain command history.
 - `--long-prompt` is opt-in because it intentionally spends more tokens.
@@ -75,4 +78,5 @@ Safety notes:
   committed.
 - Duet commands redact relay content by default; use `--raw` only when you
   intentionally need local goal, handoff, or journal text.
-- `npm run test:release` is offline. It does not call MiniMax or spend tokens.
+- `npm run test:release` is offline. It does not call MiniMax, run real Codex
+  steps, or spend tokens.

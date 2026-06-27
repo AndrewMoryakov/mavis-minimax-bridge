@@ -274,8 +274,8 @@ shell history or process inspection.
 ## Duet Relay
 
 These commands coordinate Duet Relay. All listed commands are local-only except
-explicit `duet step --agent minimax --yes`, which can call MiniMax and spend
-tokens:
+explicit `duet step --agent minimax --yes` and
+`duet step --agent codex --yes`, which can call an agent and spend tokens:
 
 ```powershell
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
@@ -285,7 +285,9 @@ node .\bridge.mjs duet next --agent minimax
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\duet-packet.local.md
 node .\bridge.mjs duet step --agent minimax --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
+node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcript.local.md
 node .\bridge.mjs duet verify --verifier .\examples\duet-tetris-browser\verify.mjs -- --skip-relay-check
@@ -333,15 +335,21 @@ derived from `duet-state.json` and `duet-journal.md`; they are not runtime
 state. Raw file output requires explicit `--raw` and a `.local.*` path inside
 the bridge root.
 
-Use `duet step --agent minimax --dry-run` to preview a future MiniMax model step
-without spending tokens. It validates status, baton ownership, iteration limits,
-packet size, route/model, and estimated input tokens.
+Use `duet step --dry-run` to preview a future agent step without spending
+tokens. It validates status, baton ownership, iteration limits, packet size,
+route/model or Codex CLI settings, and estimated input tokens.
 
 Use `duet step --agent minimax --yes` to run one real MiniMax review-only relay
 turn. This can spend tokens. The bridge writes MiniMax's answer to a pending
 `.local.md` handoff, applies it through hardened `duet pass` validation, and
 redacts the answer by default. If apply fails, the baton is not advanced and the
 pending handoff path is returned for manual recovery.
+
+Use `duet step --agent codex --yes` to run one real non-interactive Codex relay
+turn. This can spend OpenAI/Codex tokens. The bridge invokes `codex exec` with
+`--ignore-user-config`, `--ephemeral`, explicit `--cd`, `workspace-write`
+sandboxing, and a bridge timeout. The last Codex message is written to a pending
+`.local.md` handoff and applied through the same hardened `duet pass` path.
 
 Use `duet verify` to run a Node verifier through the bridge. Verifiers must be
 `.js`, `.mjs`, or `.cjs` files inside the bridge root. The command uses

@@ -322,6 +322,40 @@ test("duet step minimax dry-run rejects terminal and max-iteration states", (t) 
   fails(runBridge(limitDir, ["duet", "step", "--agent", "minimax", "--dry-run"]), /maxIterations reached/);
 });
 
+test("duet step codex dry-run validates baton and spends no tokens", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_CODEX_DRY_RUN_123";
+  writeFile(dir, "goal.md", `Codex step goal ${secret}`);
+  writeFile(dir, "handoff.md", `MiniMax handoff ${secret}`);
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "minimax", "--max-iterations", "3"]));
+  fails(runBridge(dir, ["duet", "step", "--agent", "codex", "--dry-run"]), /baton is held by minimax/);
+  ok(runBridge(dir, ["duet", "pass", "--from", "minimax", "--to", "codex", "--handoff", "handoff.md"]));
+
+  const ledgerBefore = fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8");
+  const stateBefore = fs.readFileSync(path.join(dir, "duet-state.json"), "utf8");
+  const journalBefore = fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8");
+  const dryRun = ok(runBridge(dir, ["duet", "step", "--agent", "codex", "--dry-run"]));
+  assert.equal(dryRun.event, "duet-step-dry-run");
+  assert.equal(dryRun.agent, "codex");
+  assert.equal(dryRun.mode, "exec");
+  assert.equal(dryRun.tokenSpending, false);
+  assert.equal(dryRun.wouldCallModel, true);
+  assert.equal(dryRun.liveCallAllowed, true);
+  assert.equal(dryRun.route.provider, "openai");
+  assert.equal(dryRun.route.model, "codex-cli");
+  assert.equal(typeof dryRun.route.cli, "string");
+  assert.equal(dryRun.route.sandbox, "workspace-write");
+  assert.equal(typeof dryRun.route.timeoutSec, "number");
+  assert.equal(dryRun.packet.rawSha256, undefined);
+  assert.equal(typeof dryRun.packet.redactedSha256, "string");
+  assert.equal(dryRun.prompt.withinBudget, true);
+  assert.doesNotMatch(JSON.stringify(dryRun), new RegExp(secret));
+  assert.equal(fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8"), ledgerBefore);
+  assert.equal(fs.readFileSync(path.join(dir, "duet-state.json"), "utf8"), stateBefore);
+  assert.equal(fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8"), journalBefore);
+});
+
 test("duet step minimax yes applies a fake review-only handoff without leaking by default", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_STEP_LIVE_123";
@@ -358,6 +392,63 @@ test("duet step minimax yes applies a fake review-only handoff without leaking b
   assert.equal(fs.existsSync(result.pendingPath || ""), false);
   const ledger = fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8");
   assert.match(ledger, /"event":"duet-step"/);
+});
+
+test("duet step codex yes applies a fake exec handoff without leaking by default", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_CODEX_LIVE_123";
+  writeFile(dir, "goal.md", `Codex live goal ${secret}`);
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: running\n\nCodex completed local work involving ${secret}. Pass back to MiniMax.`,
+  };
+  const result = ok(runBridge(dir, ["duet", "step", "--agent", "codex", "--yes"], { env }));
+  assert.equal(result.event, "duet-step");
+  assert.equal(result.agent, "codex");
+  assert.equal(result.mode, "exec");
+  assert.equal(result.applyStatus, "applied");
+  assert.equal(result.tokenSpending, true);
+  assert.equal(result.provider, "openai");
+  assert.equal(result.role, "codex");
+  assert.equal(result.model, "codex-cli:test");
+  assert.equal(result.status, "running");
+  assert.equal(result.pendingPath, null);
+  assert.equal(typeof result.appliedPath, "string");
+  assert.equal(result.answer, undefined);
+  assert.equal(result.usage.input_tokens > 0, true);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.baton, "minimax");
+  assert.equal(state.iteration, 2);
+  assert.equal(state.status, "running");
+  assert.match(state.lastHandoff, new RegExp(secret));
+  assert.equal(fs.existsSync(result.appliedPath), true);
+  const ledger = fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8");
+  assert.match(ledger, /"agent":"codex"/);
+});
+
+test("duet step codex yes replaces an empty fake handoff with a fallback", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Codex empty handoff goal");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: "",
+  };
+  const result = ok(runBridge(dir, ["duet", "step", "--agent", "codex", "--yes"], { env }));
+  assert.equal(result.applyStatus, "applied");
+  assert.equal(result.status, "running");
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.baton, "minimax");
+  assert.match(state.lastHandoff, /Codex returned an empty handoff/);
 });
 
 test("duet step minimax yes keeps pending handoff and state on apply failure", (t) => {

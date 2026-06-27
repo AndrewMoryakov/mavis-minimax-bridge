@@ -24,10 +24,10 @@ Always run commands from that directory.
   `canary-estimate` are local-only and do not intentionally start a model turn.
 - `duet init`, `duet show`, `duet next`, `duet packet export`,
   `duet step --dry-run`, `duet pass`, and `duet note` are local-only
-  coordination commands. They do not call MiniMax.
+  coordination commands. They do not call an agent.
 - `ask`, `canary`, `optimize-check` without `--skip-canary`, `mvs-send`, and
-  `duet step --agent minimax --yes` can spend tokens. Ask for explicit user
-  approval before running them.
+  `duet step --agent minimax --yes` / `duet step --agent codex --yes` can spend
+  tokens. Ask for explicit user approval before running them.
 - Never send to a burned or denied `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
 - `ask` automatically attaches bounded local Git source context for dirty
@@ -60,7 +60,9 @@ node .\bridge.mjs duet show
 node .\bridge.mjs duet next
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent minimax --yes
+node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
 ```
@@ -194,8 +196,8 @@ Run:
 node .\bridge.mjs duet step --agent minimax --dry-run
 ```
 
-Preview a future MiniMax step without spending tokens. It validates baton,
-status, packet size, route/model, and estimated input tokens.
+Preview a future agent step without spending tokens. It validates baton, status,
+packet size, route/model or Codex CLI settings, and estimated input tokens.
 
 ### `/bridge duet step minimax`
 
@@ -208,6 +210,18 @@ node .\bridge.mjs duet step --agent minimax --yes
 Runs one review-only MiniMax relay turn, stores the answer as a pending local
 handoff, applies it through hardened `duet pass`, and redacts the answer unless
 `--raw` is explicitly passed.
+
+### `/bridge duet step codex`
+
+Run only after explicit token-spending approval:
+
+```powershell
+node .\bridge.mjs duet step --agent codex --yes
+```
+
+Runs one non-interactive Codex relay turn through `codex exec`, stores the last
+message as a pending local handoff, applies it through hardened `duet pass`, and
+redacts the answer unless `--raw` is explicitly passed.
 
 ### `/bridge duet transcript export`
 
