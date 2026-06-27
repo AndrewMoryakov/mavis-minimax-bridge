@@ -108,6 +108,52 @@ test("duet lifecycle redacts by default and exposes text only with --raw", (t) =
   assert.match(JSON.stringify(rawShow), new RegExp(secret));
 });
 
+test("duet start initializes relay and returns a safe launch packet", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_DUET_START_123";
+  writeFile(dir, "goal.md", `Start goal ${secret}`);
+  writeFile(dir, "verify.mjs", "console.log('ok');");
+
+  const start = runBridge(dir, [
+    "duet",
+    "start",
+    "--goal",
+    "goal.md",
+    "--baton",
+    "minimax",
+    "--max-iterations",
+    "6",
+    "--max-rounds",
+    "3",
+    "--max-codex-steps",
+    "2",
+    "--max-minimax-steps",
+    "2",
+    "--max-tokens",
+    "12345",
+    "--verifier",
+    "verify.mjs",
+  ]);
+  assert.equal(start.status, 0, start.text);
+  assert.doesNotMatch(start.text, new RegExp(secret));
+  const payload = JSON.parse(start.stdout);
+  assert.equal(payload.event, "duet-start");
+  assert.equal(payload.tokenSpending, false);
+  assert.equal(payload.state.status, "running");
+  assert.equal(payload.state.baton, "minimax");
+  assert.equal(payload.state.maxIterations, 6);
+  assert.match(payload.commands.preflight, /duet loop --dry-run/);
+  assert.match(payload.commands.preflight, /--max-tokens 12345/);
+  assert.match(payload.commands.preflight, /--verifier verify\.mjs/);
+  assert.match(payload.commands.live, /duet loop --yes/);
+  assert.match(payload.commands.report, /duet report/);
+
+  const show = ok(runBridge(dir, ["duet", "show"]));
+  assert.equal(show.state.baton, "minimax");
+  assert.equal(show.state.iteration, 1);
+  fails(runBridge(dir, ["duet", "start", "--goal", "goal.md"]), /duet state already exists/);
+});
+
 test("duet next reports baton, warnings, static actions, and redacts by default", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_DUET_NEXT_123";

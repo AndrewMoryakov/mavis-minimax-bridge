@@ -227,8 +227,14 @@ agent's surface, or explicitly approve a separate `ask` / `mvs-send` step.
 Initialize a relay from a local goal file:
 
 ```powershell
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
 ```
+
+`duet start` is the human-friendly local entry point. It initializes the relay
+like `duet init`, then returns a redacted launch packet with `show`, `next`,
+`loop --dry-run`, `loop --yes`, and `report` commands. It does not run Codex,
+MiniMax, or a verifier.
 
 Inspect the relay:
 

@@ -278,6 +278,7 @@ explicit `duet step --agent minimax --yes` and
 `duet step --agent codex --yes`, which can call an agent and spend tokens:
 
 ```powershell
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
 node .\bridge.mjs duet next
@@ -305,6 +306,11 @@ node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff .
 `duet init` creates `duet-state.json` and `duet-journal.md` in the repository
 root. They are local runtime files and can contain goals, handoffs, local paths,
 and coordination history.
+
+Use `duet start` when a human wants the simplest safe launch packet. It
+initializes the relay through the same path as `duet init`, then returns
+redacted `show`, `next`, `loop --dry-run`, `loop --yes`, and `report` commands.
+It is local-only and does not call Codex, MiniMax, or a verifier.
 
 Run workspace-sensitive bridge commands from the bridge repository root. The
 workspace guard blocks `duet`, `ask`, `mvs-send --task`, and `--long-prompt`

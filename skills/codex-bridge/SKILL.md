@@ -23,7 +23,7 @@ Always run commands from the repository root.
 
 - Local-only commands: `doctor`, `status`, `state`, `config show`, `mode list`,
   `session show`, `deny-session list`, `token-stats --ledger`, `audit`,
-  `canary-estimate`, `tail`, `duet init/show/next/pass/note`,
+  `canary-estimate`, `tail`, `duet start/init/show/next/pass/note`,
   `duet packet export`, `duet step --dry-run`, `duet loop --dry-run`, and
   `duet report`.
 - Token-spending commands: `ask`, `mvs-send`, `canary`, `optimize-check`
@@ -103,6 +103,7 @@ explicit `duet step --agent minimax --yes` and
 `duet step --agent codex --yes` / `duet loop --yes`:
 
 ```powershell
+node .\bridge.mjs duet start --goal path\to\goal.md --baton codex --max-iterations 12
 node .\bridge.mjs duet init --goal path\to\goal.md --baton codex --max-iterations 12
 node .\bridge.mjs duet show
 node .\bridge.mjs duet next
@@ -180,7 +181,7 @@ to start or continue Duet Relay.
 Expected behavior:
 
 1. Create a compact `duet-goal.local.md` from the user's task.
-2. If no relay exists, run `duet init` with yourself as the first baton holder.
+2. If no relay exists, run `duet start` with yourself as the first baton holder.
 3. Run `duet show`.
 4. Do the next useful piece of work.
 5. Write a compact handoff file.
@@ -189,6 +190,10 @@ Expected behavior:
 
 Do not run token-spending commands as part of `let's go` unless the user
 explicitly approves that separate action.
+
+`duet start` is local-only. It initializes the relay and returns recommended
+`show`, `next`, `loop --dry-run`, `loop --yes`, and `report` commands, but it
+does not run the autonomous loop.
 
 Duet Relay records the baton and shared state. It does not wake, message, or
 activate MiniMax automatically. To continue on MiniMax's side, the user must

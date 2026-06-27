@@ -17,8 +17,10 @@ Rules:
   use `doctor` when the active shell may be in the wrong project.
 - If the user describes a task and says `let's go`, treat it as a request to
   start or continue Duet Relay. Create a compact local goal/handoff file, run
-  the appropriate `duet init/show/pass/note` commands, and keep working until
+  the appropriate `duet start/show/pass/note` commands, and keep working until
   `done` or `human_escalation`.
+- Prefer `duet start --goal <file>` over raw `duet init` for a new relay; it is
+  local-only and returns the recommended dry-run/live/report commands.
 - Use `duet next` before acting when baton ownership is unclear.
 - Use `duet packet export --agent minimax` when a compact derived packet is
   needed for the MiniMax side; packets are projections, not relay state.

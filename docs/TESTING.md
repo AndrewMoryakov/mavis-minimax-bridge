@@ -30,6 +30,8 @@ That keeps real repository runtime files untouched.
 Covered areas:
 
 - Duet lifecycle: `init`, `show`, `pass`, `note`, `done`.
+- `duet start` safe launch packet, redaction, recommended loop/report commands,
+  and state initialization through the normal relay files.
 - Redacted output by default and explicit `--raw` behavior.
 - Raw output behavior for mutating Duet commands.
 - `duet next` baton inspection, wrong-baton warnings, terminal states, redaction,

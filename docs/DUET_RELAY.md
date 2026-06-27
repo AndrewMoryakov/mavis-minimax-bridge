@@ -117,8 +117,13 @@ It is only a lightweight baton-passing convention.
 Initialize a relay from a goal file:
 
 ```powershell
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
 ```
+
+`duet start` is a convenience wrapper for the human-facing flow. It initializes
+the relay and returns the safe next commands (`show`, `next`, `loop --dry-run`,
+`loop --yes`, and `report`) without spending tokens.
 
 Show current relay state and the journal tail:
 

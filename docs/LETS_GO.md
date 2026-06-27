@@ -38,10 +38,20 @@ When an agent sees a task like this:
 3. If no relay exists, run:
 
 ```powershell
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12
+```
+
+or the lower-level form:
+
+```powershell
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
 ```
 
 Use `--baton minimax` if MiniMax is starting.
+
+`duet start` is local-only. It initializes the relay and returns the recommended
+`show`, `next`, `loop --dry-run`, `loop --yes`, and `report` commands, but it
+does not run the autonomous loop.
 
 4. Read current relay state:
 

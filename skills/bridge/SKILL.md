@@ -22,7 +22,7 @@ Always run commands from that directory.
 
 - `doctor`, `status`, `state`, `audit`, `token-stats`, `session show`, `mode list`, and
   `canary-estimate` are local-only and do not intentionally start a model turn.
-- `duet init`, `duet show`, `duet next`, `duet packet export`,
+- `duet start`, `duet init`, `duet show`, `duet next`, `duet packet export`,
   `duet step --dry-run`, `duet loop --dry-run`, `duet report`, `duet pass`,
   and `duet note` are local-only coordination commands. They do not call an
   agent.
@@ -58,6 +58,7 @@ node .\bridge.mjs token-stats --ledger
 node .\bridge.mjs mode list
 node .\bridge.mjs session show
 node .\bridge.mjs canary-estimate
+node .\bridge.mjs duet start --goal path\to\goal.md --baton minimax --max-iterations 12
 node .\bridge.mjs duet show
 node .\bridge.mjs duet next
 node .\bridge.mjs duet packet export --agent minimax
@@ -156,6 +157,18 @@ node .\bridge.mjs canary-estimate
 ```
 
 Use this before any canary that may spend tokens.
+
+### `/bridge duet start <goal-file>`
+
+Run:
+
+```powershell
+node .\bridge.mjs duet start --goal path\to\goal.md --baton minimax --max-iterations 12
+```
+
+Initialize a relay and return the safe launch packet: `show`, `next`,
+`loop --dry-run`, `loop --yes`, and `report` commands. This is local-only and
+does not call Codex, MiniMax, or a verifier.
 
 ### `/bridge duet show`
 
@@ -336,7 +349,7 @@ to start or continue Duet Relay.
 Expected behavior:
 
 1. Create a compact `duet-goal.local.md` from the user's task.
-2. If no relay exists, run `duet init` with MiniMax as the first baton holder.
+2. If no relay exists, run `duet start` with MiniMax as the first baton holder.
 3. Run `duet show`.
 4. Do the next useful piece of work.
 5. Write a compact handoff file.

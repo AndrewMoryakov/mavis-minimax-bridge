@@ -144,6 +144,7 @@ function usage() {
   node .\\bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-send --task <file> --yes [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-send --content <text> --allow-inline-content --yes [--session <mvs-id>] [--daemon-port <port>]
+  node .\\bridge.mjs duet start --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>]
   node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
@@ -4116,7 +4117,7 @@ async function withDuetLockAsync(callback) {
   }
 }
 
-function duetInitCommand(args) {
+function initializeDuetState(args) {
   if ((fs.existsSync(duetStatePath) || fs.existsSync(duetJournalPath)) && !args.includes("--force")) {
     throw new Error("duet state already exists; use --force to reinitialize");
   }
@@ -4142,7 +4143,65 @@ function duetInitCommand(args) {
     "utf8",
   );
   appendJsonl(ledgerPath, { event: "duet-init", baton, maxIterations });
+  return state;
+}
+
+function duetInitCommand(args) {
+  const state = initializeDuetState(args);
   printDuetEvent("duet-init", state, args);
+}
+
+function duetStartLoopOptions(args) {
+  const maxRounds = positiveIntegerArg(args, "--max-rounds", "8");
+  const maxCodexSteps = positiveIntegerArg(args, "--max-codex-steps", "4");
+  const maxMiniMaxSteps = positiveIntegerArg(args, "--max-minimax-steps", "4");
+  const maxTokens = positiveIntegerArg(args, "--max-tokens", "60000");
+  const verifier = argValue(args, "--verifier", null);
+  return { maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, verifier };
+}
+
+function duetStartCommands(loop) {
+  const loopArgs = [
+    "--max-rounds", String(loop.maxRounds),
+    "--max-codex-steps", String(loop.maxCodexSteps),
+    "--max-minimax-steps", String(loop.maxMiniMaxSteps),
+    "--max-tokens", String(loop.maxTokens),
+    loop.verifier ? "--verifier" : null,
+    loop.verifier,
+  ];
+  const suffix = loopArgs.filter(Boolean).join(" ");
+  return {
+    inspect: [
+      "node .\\bridge.mjs duet show",
+      "node .\\bridge.mjs duet next",
+    ],
+    preflight: `node .\\bridge.mjs duet loop --dry-run ${suffix}`,
+    live: `node .\\bridge.mjs duet loop --yes ${suffix}`,
+    report: "node .\\bridge.mjs duet report",
+    reportMarkdown: "node .\\bridge.mjs duet report --format markdown --out .\\duet-report.local.md",
+  };
+}
+
+function duetStartCommand(args) {
+  const state = initializeDuetState(args);
+  const raw = args.includes("--raw");
+  const loop = duetStartLoopOptions(args);
+  const out = {
+    event: "duet-start",
+    tokenSpending: false,
+    raw,
+    statePath: duetStatePath,
+    journalPath: duetJournalPath,
+    state: raw ? state : publicDuetState(state),
+    loop,
+    commands: duetStartCommands(loop),
+    warnings: [
+      "duet start is local-only; run the dry-run command before approving the live loop",
+      "the live command can spend Codex/OpenAI and MiniMax tokens",
+    ],
+  };
+  appendJsonl(ledgerPath, { event: "duet-start", baton: state.baton, maxIterations: state.maxIterations, loop });
+  printJson(out);
 }
 
 function duetShowCommand(args) {
@@ -4217,6 +4276,7 @@ async function duetCommand(args) {
   const [subcommand, ...rest] = args;
   if (!subcommand || subcommand === "help" || subcommand === "--help") {
     console.log(`Usage:
+  node .\\bridge.mjs duet start --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>]
   node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
@@ -4230,6 +4290,7 @@ async function duetCommand(args) {
   node .\\bridge.mjs duet note --agent codex|minimax --note <file> [--raw]`);
     return;
   }
+  if (subcommand === "start") return withDuetLock(() => duetStartCommand(rest));
   if (subcommand === "init") return withDuetLock(() => duetInitCommand(rest));
   if (subcommand === "show") return duetShowCommand(rest);
   if (subcommand === "next") return duetNextCommand(rest);
