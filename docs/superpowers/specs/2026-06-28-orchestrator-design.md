@@ -1,4 +1,11 @@
-# Orchestrator Layer — Design Spec
+# Local Supervised Orchestrator — Design Spec
+
+> **This is a *local supervised orchestrator*, not a production unattended one.**
+> The defining frame: a human is in the loop and owns the risk, and is the
+> recovery actor. Durability here exists for **observability and manual decision**,
+> not automatic recovery. Any future change that assumes unattended/autonomous
+> operation belongs in the separate production project, not here — do not let a
+> review drift this design toward production-grade durability.
 
 Date: 2026-06-28. Status: **approved for implementation planning — design only, not
 yet implemented.**
@@ -17,11 +24,13 @@ realpath target validation, and the runtime-files contract.
 
 ## Goal
 
-Add an LLM **orchestrator** that owns a high-level task end-to-end ("под ключ")
-and decides, step by step, which **worker** agent (codex, minimax) to run next.
-Workers execute; they do not call each other — the orchestrator routes. The human
-gives the task and accepts the risk; there are no correctness validators or
-guarantees beyond the orchestration itself.
+Add an LLM **local supervised orchestrator** that owns a high-level task
+end-to-end ("под ключ") and decides, step by step, which **worker** agent (codex,
+minimax) to run next. Workers execute; they do not call each other — the
+orchestrator routes. A human supervises the run, gives the task, and **owns the
+risk and the recovery decisions**; there are no correctness validators or
+guarantees beyond the orchestration itself. "Supervised" is load-bearing: it is
+why durability is for observation + manual decision, not automatic recovery.
 
 The defining constraint is **orchestrator context hygiene**: the orchestrator
 reasons from a fresh, high-level view and is never polluted by raw code/diffs, so
