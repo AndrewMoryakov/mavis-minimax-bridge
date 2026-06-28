@@ -15,6 +15,7 @@ import { isProbablyText, textDigest, textSummary } from "./lib/text-utils.mjs";
 import { makeSourceContext, readSourceSnippet } from "./lib/source-context.mjs";
 import { makeVerifier, verifierArgs } from "./lib/verifier.mjs";
 import { fetchJson, fetchJsonWithTimeout } from "./lib/http-json.mjs";
+import { makeMvsClient } from "./lib/mvs-client.mjs";
 
 const bridgeDir = path.dirname(fileURLToPath(import.meta.url));
 const paths = makePaths(bridgeDir);
@@ -62,6 +63,21 @@ function loadInitialConfig() {
 }
 
 const config = loadInitialConfig();
+// config is mutated in place by writeConfig, so by-reference injection keeps the
+// client's reads live. runJson is hoisted (a function declaration below).
+const {
+  isDeniedSession,
+  assertNotDeniedSession,
+  assertMvsSessionID,
+  sessionDirectory,
+  sessionQuery,
+  messageUrl,
+  fetchMavisJson,
+  verifyMavisSession,
+  createSession,
+  mavisCli,
+  readUsage,
+} = makeMvsClient({ config, runJson });
 
 function writeConfig(next, reason = "config-write") {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -340,22 +356,6 @@ function readLongPrompt(args) {
 function requireSpendingApproval(args, command) {
   if (!args.includes("--yes")) {
     throw new Error(`${command} requires --yes because it can trigger a model turn`);
-  }
-}
-
-function isDeniedSession(sessionID) {
-  return Boolean(sessionID && config.denySessions?.includes(sessionID));
-}
-
-function assertNotDeniedSession(sessionID, action) {
-  if (isDeniedSession(sessionID)) {
-    throw new Error(`refusing ${action} for denied session ${sessionID}`);
-  }
-}
-
-function assertMvsSessionID(sessionID, action = "session") {
-  if (!sessionID || !/^mvs_[A-Za-z0-9_-]+$/.test(String(sessionID))) {
-    throw new Error(`${action} requires --session mvs_<id>`);
   }
 }
 
@@ -690,18 +690,6 @@ function modelSpec(model = null) {
   return { providerID, modelID: rest.join("/") };
 }
 
-function sessionDirectory() {
-  return config.sessionDirectory || path.join(os.homedir(), ".minimax", "agents", "mavis", "workspace");
-}
-
-function sessionQuery() {
-  return `directory=${encodeURIComponent(sessionDirectory())}`;
-}
-
-function messageUrl(port, sessionID) {
-  return `http://127.0.0.1:${port}/session/${sessionID}/message?${sessionQuery()}`;
-}
-
 function mvsDaemonPort(args) {
   return Number(argValue(args, "--daemon-port", config.mavisDaemonPort || 15321));
 }
@@ -712,39 +700,6 @@ function mvsSession(args) {
   assertMvsSessionID(sessionID);
   assertNotDeniedSession(sessionID, "session access");
   return sessionID;
-}
-
-function mvsBase(port) {
-  return `http://127.0.0.1:${port}/mavis/api`;
-}
-
-async function fetchMavisJson(pathname, options = {}, timeoutSec = 60) {
-  const port = options.port || config.mavisDaemonPort || 15321;
-  return await fetchJsonWithTimeout(`${mvsBase(port)}${pathname}`, options.fetchOptions || {}, timeoutSec);
-}
-
-async function verifyMavisSession(port, sessionID, options = {}) {
-  assertMvsSessionID(sessionID);
-  assertNotDeniedSession(sessionID, options.action || "session access");
-  const statusID = options.statusID || sessionID;
-  const status = await fetchMavisJson(`/session/${encodeURIComponent(statusID)}`, { port }, 15);
-  const resolvedSession = status?.session?.sessionId || null;
-  if (resolvedSession && resolvedSession !== sessionID && !options.allowMismatch) {
-    throw new Error(`session mismatch: requested ${sessionID}, resolved ${resolvedSession}`);
-  }
-  return { statusID, status, resolvedSession };
-}
-
-async function createSession(port, title) {
-  return await fetchJsonWithTimeout(
-    `http://127.0.0.1:${port}/session?${sessionQuery()}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title }),
-    },
-    10,
-  );
 }
 
 async function sendPrompt(port, sessionID, text, options = {}) {
@@ -997,50 +952,6 @@ async function runCanarySequence(server, args, titlePrefix) {
     signals: extractSignalsFromMessages(messages),
     aborted: false,
   };
-}
-
-function usageSummary(usage) {
-  const rows = Array.isArray(usage?.rows) ? usage.rows : [];
-  const summary = usage?.summary || {};
-  const last = rows.length > 0 ? rows[rows.length - 1] : null;
-  return {
-    turns: Number(summary.turns ?? rows.length ?? 0),
-    inputTokens: Number(summary.inputTokens ?? 0),
-    outputTokens: Number(summary.outputTokens ?? 0),
-    cacheReadTokens: Number(summary.cacheReadTokens ?? 0),
-    cacheWriteTokens: Number(summary.cacheWriteTokens ?? 0),
-    costUsd: Number(summary.costUsd ?? 0),
-    last: last ? {
-      provider: typeof last.model === "string" ? last.model.split("/")[0] : null,
-      model: last.model || null,
-      inputTokens: Number(last.inputTokens || 0),
-      outputTokens: Number(last.outputTokens || 0),
-      cacheReadTokens: Number(last.cacheReadTokens || 0),
-      cacheWriteTokens: Number(last.cacheWriteTokens || 0),
-    } : null,
-  };
-}
-
-function readUsage(sessionID) {
-  if (!sessionID) return { skipped: true, reason: "no session id" };
-  if (!String(sessionID).startsWith("mvs_")) {
-    return { skipped: true, sessionID, reason: "not a Mavis session id; pass --session mvs_<id> to collect mavis usage" };
-  }
-  if (isDeniedSession(sessionID)) {
-    return { skipped: true, sessionID, reason: "session is denied" };
-  }
-  try {
-    const usage = runJson(mavisCli(), ["usage", "session", sessionID, "--json"]);
-    return { skipped: false, sessionID, summary: usageSummary(usage), raw: usage };
-  } catch (error) {
-    return { skipped: true, sessionID, reason: error.message };
-  }
-}
-
-function mavisCli() {
-  if (config.mavisCli) return config.mavisCli;
-  const cmd = path.join(os.homedir(), ".mavis", "bin", process.platform === "win32" ? "mavis.cmd" : "mavis");
-  return fs.existsSync(cmd) ? cmd : "mavis";
 }
 
 function routingVerdict(server) {
