@@ -1403,6 +1403,8 @@ test("doctor is local-only and warns when optional sentinels are absent", (t) =>
   assert.equal(report.event, "doctor");
   assert.equal(report.cwdMatchesExpectedRoot, true);
   assert.equal(report.verdict, "warn");
+  assert.equal(typeof report.claude.available, "boolean");
+  assert.equal(typeof report.claude.kind, "string");
   assert.equal(report.sentinels.find((item) => item.relativePath === "bridge.mjs").exists, true);
   assert.equal(fs.existsSync(path.join(dir, "ledger.jsonl")), false);
 });
@@ -1417,6 +1419,30 @@ test("doctor reports invalid config without crashing", (t) => {
   assert.equal(report.verdict, "fail");
   assert.match(report.config.error, /maxTurns/);
   assert.equal(fs.existsSync(path.join(dir, "ledger.jsonl")), false);
+});
+
+test("config accepts claudeCli and doctor reports configured Claude shim", (t) => {
+  const dir = sandbox(t);
+  const cliDir = path.join(dir, "Claude CLI");
+  fs.mkdirSync(cliDir);
+  const cliPath = path.join(cliDir, "claude.cmd");
+  fs.writeFileSync(cliPath, "@echo off\r\n", "utf8");
+
+  const updated = ok(runBridge(dir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(cliPath)]));
+  assert.equal(updated.event, "config-updated");
+  assert.equal(updated.config.claudeCli, cliPath);
+
+  const shown = ok(runBridge(dir, ["config", "show"]));
+  assert.equal(shown.config.claudeCli, cliPath);
+
+  const report = ok(runBridge(dir, ["doctor"]));
+  assert.equal(report.claude.available, true);
+  assert.equal(report.claude.kind, "cmd-shim");
+  assert.equal(report.claude.command, cliPath);
+
+  const reset = ok(runBridge(dir, ["config", "set", "--key", "claudeCli", "--value", "\"\""]));
+  assert.equal(reset.config.claudeCli, null);
+  fails(runBridge(dir, ["config", "set", "--key", "claudeSearchTimeoutMs", "--value", "100"]), /unsupported config key/);
 });
 
 test("workspace guard blocks sensitive commands from the wrong cwd without writing runtime files", (t) => {

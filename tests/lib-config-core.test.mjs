@@ -30,6 +30,7 @@ test("normalizeConfig merges env defaults and dedupes deny sessions", () => {
   assert.equal(config.env.MAVIS_CONTEXT_BUDGET_PROFILE, "medium");
   assert.equal(config.env.MAVIS_PROMPT_CACHE_MODE, "enforce");
   assert.deepEqual(config.denySessions, ["mvs_a", "mvs_b"]);
+  assert.equal(config.claudeCli, null);
 });
 
 test("parseConfigValue parses JSON scalars and preserves plain strings", () => {
@@ -57,10 +58,14 @@ test("validateConfig rejects invalid config shapes", () => {
     /MAVIS_CONTEXT_BUDGET_PROFILE/,
   );
   assert.throws(() => normalizeConfig({ maxInputToken: 123 }), /unknown config key: maxInputToken/);
+  assert.throws(() => normalizeConfig({ claudeCli: 123 }), /claudeCli/);
   assert.throws(
     () => normalizeConfig({ env: { MAVIS_CONTEXT_BUDGET_PROFIL: "max" } }),
     /unknown env config key: MAVIS_CONTEXT_BUDGET_PROFIL/,
   );
+
+  assert.equal(normalizeConfig({ claudeCli: "" }).claudeCli, null);
+  assert.equal(normalizeConfig({ claudeCli: "claude-custom" }).claudeCli, "claude-custom");
 
   const config = normalizeConfig({});
   assert.doesNotThrow(() => validateConfig(config));

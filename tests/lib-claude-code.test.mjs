@@ -3,6 +3,12 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 
+import {
+  classifyClaudePath,
+  defaultClaudeCli,
+  resolveClaudeCli,
+} from "../lib/claude-code.mjs";
+
 const fakeClaude = path.resolve("tests", "helpers", "fake-claude.mjs");
 
 function parseNdjson(text) {
@@ -119,4 +125,183 @@ test("claude stage 0 fake process env does not inherit a real claude binary", ()
       process.env.CLAUDE_BIN = original;
     }
   }
+});
+
+function mockFs(existing = new Set()) {
+  return {
+    lstatSync(filePath) {
+      if (!existing.has(filePath)) throw new Error(`missing ${filePath}`);
+      return { isSymbolicLink: () => false };
+    },
+    statSync(filePath) {
+      if (!existing.has(filePath)) throw new Error(`missing ${filePath}`);
+      return { isFile: () => true, mode: 0o755 };
+    },
+  };
+}
+
+function mockRunner(results) {
+  const calls = [];
+  const runCommand = async (file, args) => {
+    calls.push({ file, args });
+    const key = `${file} ${args.join(" ")}`;
+    const result = results[key] || results[file];
+    if (result instanceof Error) throw result;
+    return result || { ok: false, stdout: "", stderr: "", exitCode: 1, timedOut: false, error: null };
+  };
+  runCommand.calls = calls;
+  return runCommand;
+}
+
+test("claude path classifier recognizes executable and shell shims", () => {
+  assert.equal(defaultClaudeCli("win32"), "claude.cmd");
+  assert.equal(defaultClaudeCli("linux"), "claude");
+  assert.equal(classifyClaudePath("/bin/claude"), "executable");
+  assert.equal(classifyClaudePath("/bin/claude.cmd"), "cmd-shim");
+  assert.equal(classifyClaudePath("/bin/claude.bat"), "bat-shim");
+});
+
+test("resolveClaudeCli accepts configured path with spaces and .cmd shim", async () => {
+  const cli = path.resolve("tmp path", "Claude CLI", "claude.cmd");
+  const resolved = await resolveClaudeCli({
+    configuredCli: cli,
+    fs: mockFs(new Set([cli])),
+    runCommand: mockRunner({}),
+  });
+
+  assert.equal(resolved.kind, "cmd-shim");
+  assert.equal(resolved.available, true);
+  assert.equal(resolved.command, cli);
+  assert.equal(resolved.source, "config");
+});
+
+test("resolveClaudeCli finds a POSIX executable on PATH", async () => {
+  const cli = path.resolve("usr", "bin", "claude");
+  const runCommand = mockRunner({
+    "which claude": { ok: true, stdout: `${cli}\n`, stderr: "", exitCode: 0 },
+  });
+  const resolved = await resolveClaudeCli({
+    platform: "linux",
+    fs: mockFs(new Set([cli])),
+    runCommand,
+  });
+
+  assert.equal(resolved.kind, "executable");
+  assert.equal(resolved.available, true);
+  assert.equal(resolved.command, cli);
+  assert.equal(resolved.source, "path");
+  assert.deepEqual(runCommand.calls.map((call) => call.file), ["which"]);
+});
+
+test("resolveClaudeCli reports missing default command", async () => {
+  const resolved = await resolveClaudeCli({
+    platform: "linux",
+    fs: mockFs(),
+    runCommand: mockRunner({
+      "which claude": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    }),
+  });
+
+  assert.equal(resolved.kind, "missing");
+  assert.equal(resolved.available, false);
+  assert.match(resolved.remediation, /Install Claude Code CLI/);
+});
+
+test("resolveClaudeCli reports missing configured path", async () => {
+  const resolved = await resolveClaudeCli({
+    configuredCli: path.resolve("missing", "claude"),
+    fs: mockFs(),
+    runCommand: mockRunner({}),
+  });
+
+  assert.equal(resolved.kind, "missing");
+  assert.equal(resolved.available, false);
+  assert.equal(resolved.source, "config");
+});
+
+test("resolveClaudeCli accepts configured .bat shim", async () => {
+  const cli = path.resolve("bin", "claude.bat");
+  const resolved = await resolveClaudeCli({
+    configuredCli: cli,
+    fs: mockFs(new Set([cli])),
+    runCommand: mockRunner({}),
+  });
+
+  assert.equal(resolved.kind, "bat-shim");
+  assert.equal(resolved.available, true);
+});
+
+test("resolveClaudeCli detects PowerShell functions as non-spawnable", async () => {
+  const runCommand = mockRunner({
+    "where claude.cmd": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "where claude.exe": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "where claude": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "powershell.exe": { ok: true, stdout: "Function\n\nfunction claude {}\n", stderr: "", exitCode: 0 },
+  });
+  const resolved = await resolveClaudeCli({
+    platform: "win32",
+    fs: mockFs(),
+    runCommand,
+  });
+
+  assert.equal(resolved.kind, "powershell-function");
+  assert.equal(resolved.available, false);
+  assert.match(resolved.remediation, /standalone Claude CLI/);
+});
+
+test("resolveClaudeCli detects PowerShell cmdlets as non-spawnable after where misses", async () => {
+  const runCommand = mockRunner({
+    "where claude.cmd": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "where claude.exe": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "where claude": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "powershell.exe": { ok: true, stdout: "Cmdlet\n\nGet-Claude\n", stderr: "", exitCode: 0 },
+  });
+  const resolved = await resolveClaudeCli({
+    platform: "win32",
+    fs: mockFs(),
+    runCommand,
+  });
+
+  assert.equal(resolved.kind, "powershell-function");
+  assert.equal(resolved.available, false);
+  assert.match(resolved.warning, /PowerShell Cmdlet/);
+  assert.deepEqual(runCommand.calls.map((call) => call.file), ["where", "where", "where", "powershell.exe"]);
+});
+
+test("resolveClaudeCli resolves PowerShell application source to shim", async () => {
+  const cli = path.resolve("Claude", "claude.cmd");
+  const runCommand = mockRunner({
+    "where claude.cmd": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "where claude.exe": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "where claude": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "powershell.exe": { ok: true, stdout: `Application\n${cli}\n${cli}\n`, stderr: "", exitCode: 0 },
+  });
+  const resolved = await resolveClaudeCli({
+    platform: "win32",
+    fs: mockFs(new Set([cli])),
+    runCommand,
+  });
+
+  assert.equal(resolved.kind, "cmd-shim");
+  assert.equal(resolved.available, true);
+  assert.equal(resolved.command, cli);
+  assert.equal(resolved.source, "powershell");
+});
+
+test("resolveClaudeCli turns PowerShell probe failures into error diagnostics", async () => {
+  const runCommand = mockRunner({
+    "where claude.cmd": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "where claude.exe": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "where claude": { ok: false, stdout: "", stderr: "", exitCode: 1 },
+    "powershell.exe": { ok: false, stdout: "", stderr: "timeout", exitCode: null, timedOut: true, error: "timeout" },
+  });
+  const resolved = await resolveClaudeCli({
+    platform: "win32",
+    fs: mockFs(),
+    runCommand,
+  });
+
+  assert.equal(resolved.kind, "error");
+  assert.equal(resolved.available, false);
+  assert.match(resolved.warning, /PowerShell/);
 });

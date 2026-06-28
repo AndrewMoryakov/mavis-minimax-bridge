@@ -16,6 +16,7 @@ import { makeSourceContext, readSourceSnippet } from "./lib/source-context.mjs";
 import { makeVerifier, verifierArgs, verifierEnv } from "./lib/verifier.mjs";
 import { fetchJson, fetchJsonWithTimeout } from "./lib/http-json.mjs";
 import { makeMvsClient } from "./lib/mvs-client.mjs";
+import { resolveClaudeCli } from "./lib/claude-code.mjs";
 import {
   codexIsolationWarning,
   codexPromptPathForOutput,
@@ -254,7 +255,28 @@ function sentinelInfo(relativePath, options = {}) {
   return info;
 }
 
-function doctorReport() {
+function doctorWarning(claude) {
+  if (!claude || claude.available) return null;
+  if (claude.kind === "missing") return "claude cli missing";
+  if (claude.kind === "powershell-function") return "claude cli is a PowerShell function or alias";
+  if (claude.kind === "error") return "claude cli probe failed";
+  return null;
+}
+
+function publicClaudeDiagnostic(claude) {
+  return {
+    configuredCli: claude.configuredCli,
+    available: claude.available,
+    kind: claude.kind,
+    command: claude.command,
+    path: claude.path,
+    source: claude.source,
+    warning: claude.warning,
+    remediation: claude.remediation,
+  };
+}
+
+async function doctorReport() {
   const expectedRepoRoot = realpathOrResolve(bridgeDir);
   const currentCwd = realpathOrResolve(process.cwd());
   const cwdMatchesExpectedRoot = pathsEqual(currentCwd, expectedRepoRoot);
@@ -283,6 +305,9 @@ function doctorReport() {
   if (git.bridgeDir.available && !git.bridgeDir.matchesExpectedRoot) {
     warnings.push("bridge directory git root does not match bridge root");
   }
+  const claude = publicClaudeDiagnostic(await resolveClaudeCli({ configuredCli: config.claudeCli }));
+  const claudeWarning = doctorWarning(claude);
+  if (claudeWarning) warnings.push(claudeWarning);
 
   const verdict = !cwdMatchesExpectedRoot || missingRequiredSentinels.length > 0 || packageNameMismatch || configLoadError
     ? "fail"
@@ -305,14 +330,15 @@ function doctorReport() {
       loaded: !configLoadError,
       error: configLoadError ? configLoadError.message : null,
     },
+    claude,
     warnings,
     verdict,
     nextCommand,
   };
 }
 
-function doctorCommand() {
-  printJson(doctorReport());
+async function doctorCommand() {
+  printJson(await doctorReport());
 }
 
 function isHelpArgs(args) {
@@ -1221,6 +1247,7 @@ function publicConfigSummary() {
     askSourceContextMode: config.askSourceContextMode,
     askMaxSourceContextChars: config.askMaxSourceContextChars,
     duetPacketMaxChars: config.duetPacketMaxChars,
+    claudeCli: config.claudeCli,
     asciiConsole: config.asciiConsole,
     denySessionsCount: config.denySessions.length,
     mode: modeState(),
@@ -1258,6 +1285,7 @@ function setConfigKey(key, value) {
     "duetPacketMaxChars",
     "codexCli",
     "codexStepTimeoutSec",
+    "claudeCli",
     "asciiConsole",
   ]);
   const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };
@@ -4035,7 +4063,7 @@ async function main() {
       return usage();
     }
     if (command === "guide" || command === "start" || command === "start-here") return guideCommand();
-    if (command === "doctor") return doctorCommand();
+    if (command === "doctor") return await doctorCommand();
     ensureWorkspaceRoot(command, args);
     if (command === "status") return await statusCommand();
     if (command === "state") return await stateCommand();

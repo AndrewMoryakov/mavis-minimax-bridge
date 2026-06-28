@@ -138,7 +138,7 @@ Done when:
 - `npm run test:release` remains green.
 - No bridge runtime behavior changes.
 
-### Stage 1: Claude Resolver And Doctor-Only Diagnostics
+### Stage 1: Claude Resolver And Doctor-Only Diagnostics - Done
 
 Goal: detect Claude Code safely, especially on Windows.
 
@@ -156,9 +156,10 @@ Work:
 - Implement `resolveClaudeCli()`.
 - Detect executable, `.cmd/.bat`, npm shim, PowerShell function/alias, and
   missing command.
-- On Windows, explicitly distinguish PowerShell functions/aliases from
-  spawnable binaries. Function/alias detection should produce a diagnostic or a
-  resolved underlying executable, not a path that `spawn()` cannot run.
+- On Windows, explicitly distinguish PowerShell functions, aliases, cmdlets,
+  filters, scripts, and external scripts from spawnable binaries. Non-application
+  command detection should produce a diagnostic or a resolved underlying
+  executable, not a path that `spawn()` cannot run.
 - Extend `doctor` with Claude availability and remediation.
 
 Done when:
@@ -167,6 +168,14 @@ Done when:
 - Config validation accepts Claude keys.
 - Tests cover missing CLI, configured path, path with spaces, `.cmd`, and
   PowerShell function detection.
+
+Closeout:
+
+- Implemented `resolveClaudeCli()` and doctor-only diagnostics.
+- MiniMax reviewed the implementation twice through Duet Relay.
+- Fixed the review finding that PowerShell cmdlets, filters, scripts, and
+  external scripts must be treated as non-spawnable.
+- Verified with `npm run test:release`.
 
 ### Stage 2: Stateless No-Tools Claude Runner
 
@@ -179,6 +188,13 @@ Files:
 
 Work:
 
+- Split resolver probe timeout from runner timeout. Suggested defaults:
+  roughly 5 seconds for CLI discovery and roughly 60 seconds for one runner
+  turn.
+- Add a `claude.requireAvailable`-style gate so doctor can remain warning-only
+  by default while allowing strict failure when Claude runner usage is expected.
+- Redact secrets from runner diagnostics, especially authorization and proxy
+  headers, before exposing any verbose stderr or environment-derived text.
 - Build Claude argv for MVP-A.
 - Parse stream-json stdout.
 - Collect answer, usage, cost, model, result subtype, stop reason, duration,
@@ -563,7 +579,7 @@ Cover:
 - Windows path with spaces
 - `.cmd` shim
 - missing executable
-- PowerShell function detection
+- PowerShell function/cmdlet/script detection
 - `duet step --agent claude --dry-run`
 - `duet step --agent claude --yes` with fake CLI
 - `duet loop` over `codex,claude` only after the registry refactor
