@@ -48,7 +48,9 @@ are clean; the orchestrator on top of them is not.
 | `isProbablyText` (~432) | text/binary sniff | used by both `readSourceSnippet` (~535) and `readUntrackedSnippet` (~472, stays in `bridge.mjs`) — a general text util, NOT a source-context leaf | home in shared `lib/text-utils.mjs` (prep, lands before/with Patch 6) |
 | verifier runner (`verifierArgs`, `validateForwardedVerifierArgs`, `resolveVerifierPath`, `verifierEnv`, `runVerifierProcess`) | ~3885–4060 | self-contained process runner — BUT `runVerifierProcess` pulls in `summarizeStream`/`killProcessTree`/`verifierMax*` consts/`now`, and `summarizeStream` needs `textDigest`/`textSummary` which are NOT verifier-local | take second (Patch 7, after a shared-summarizer prep) |
 | `buildAskSourceContext` | ~653–769 | NOT a leaf: calls `runGit` (~403), `safeGitText` (~411), `appendBounded` (~415), `listUntrackedPaths` (~437), `readUntrackedSnippet` (~447), `relativeBridgePath` (~481), `argValue`/`argValues` (~242), reads the `config` singleton (`askSourceContextMode` ~654, `askMaxSourceContextChars` ~662) | keep in `bridge.mjs` for now (Patch 6b, optional later) |
-| mvs-client (`fetchMavisJson`, `verifyMavisSession`, `createSession`, `sendPrompt`, `readUsage`) | ~906–1209 | HTTP + session + mutable `config` singleton; `writeConfig` mutates it (~46–53), risking a `config -> client -> config` cycle | defer — needs a config-write injection prep patch first |
+| HTTP-JSON transport (`fetchJson`, `fetchJsonWithTimeout`) | ~327–353 | pure (global fetch + AbortController); also used by opencode `/config` inspection | done — `lib/http-json.mjs` |
+| mvs-client Tier-2 (session helpers, `fetchMavisJson`, `verifyMavisSession`, `createSession`, `readUsage`, `mavisCli`) | ~720–1071 | read-only `config` (inject by reference — safe, mutated in place) + session-id validators | extractable via `makeMvsClient`, but a multi-function judgment call, not a leaf |
+| `sendPrompt` | ~777 | drags the optimization subsystem (`addOptimizationContext`/`requiredModel`/`modelSpec`) | keep in `bridge.mjs` |
 | codex-runner (`runCodexExecTurn`, `codexWorkspaceForMode`, …) | ~2805–3526 | large, mixed (process spawn + workspace + Duet step glue) | defer on size/coupling grounds (see note) |
 
 Deferral note: codex-runner's earlier "actively edited right now" reason is gone
@@ -197,11 +199,28 @@ Checks:
 - `duet verify` behavior unchanged.
 - `npm run test:release`.
 
+## Done since the original plan
+
+- `lib/http-json.mjs` — extracted the pure transport leaves `fetchJson` /
+  `fetchJsonWithTimeout` (global fetch + AbortController, no config). Named for
+  transport, not mvs, because the opencode `/config` inspection also uses
+  `fetchJson`. Tested against a real `node:http` server.
+
 ## Deferred (separate pass, each needs its own focused plan)
 
-- `lib/mvs-client.mjs` — needs an explicit prep patch to make the config
-  write-path injectable (`writeConfig` mutates the `config` singleton ~46–53)
-  before the client can move without a `config -> client -> config` cycle.
+- `lib/mvs-client.mjs` — **the original cycle rationale was wrong.** These
+  functions only *read* `config`, never write it, and `config` is mutated in
+  place (Phase-1 note: `writeConfig` mutates the existing object), so injecting
+  `config` by reference keeps reads live with no `config -> client -> config`
+  cycle. The real disqualifier for a mechanical move is `sendPrompt` (~777),
+  which drags in the optimization subsystem
+  (`addOptimizationContext -> optimizationContext -> requiredModel/roleOutputCap/
+  modelSpec`). A "Tier-2" cluster — the session-URL helpers, `fetchMavisJson`,
+  `verifyMavisSession`, `createSession`, `readUsage`/`mavisCli`, plus the
+  session-id validators `assertMvsSessionID`/`assertNotDeniedSession`/
+  `isDeniedSession` — is extractable via `makeMvsClient({ config, ... })` with
+  config-by-ref, but it is a multi-function judgment call, not a leaf. Keep
+  `sendPrompt` in `bridge.mjs`.
 - `lib/codex-runner.mjs` — defer on size/mixed-concerns grounds (above), not on
   "currently editing".
 
@@ -225,5 +244,10 @@ regressions.
 3. Patch 6 — `lib/source-context.mjs` (pure leaves, importing `isProbablyText`
    from `text-utils`) + tests, via TDD.
 4. Patch 7 — `lib/verifier.mjs` + tests (summarizer already shared by step 2).
-5. Pause for review. `mvs-client` (after a config-injection prep) and
-   `codex-runner` in later focused passes.
+5. Multi-agent review of the committed extractions; closed the MEDIUM verifier
+   coverage gaps and a dead bind it surfaced.
+6. `lib/http-json.mjs` — extracted the pure transport leaves.
+7. Natural finish line: the remaining candidates (mvs-client Tier-2,
+   `codex-runner`) are judgment-call clusters, not leaves, and everything else
+   is code both plans say stays in `bridge.mjs`. Surface Tier-2-vs-stop to the
+   user rather than hunting for more to extract.
