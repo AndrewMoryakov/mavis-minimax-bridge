@@ -14,6 +14,7 @@ import { makePaths } from "./lib/paths.mjs";
 import { isProbablyText, textDigest, textSummary } from "./lib/text-utils.mjs";
 import { makeSourceContext, readSourceSnippet } from "./lib/source-context.mjs";
 import { makeVerifier, verifierArgs } from "./lib/verifier.mjs";
+import { fetchJson, fetchJsonWithTimeout } from "./lib/http-json.mjs";
 
 const bridgeDir = path.dirname(fileURLToPath(import.meta.url));
 const paths = makePaths(bridgeDir);
@@ -322,34 +323,6 @@ function runJson(command, commandArgs, options = {}) {
 function quoteCmd(value) {
   const text = String(value);
   return /[\s"&<>|^]/.test(text) ? `"${text.replace(/"/g, '\\"')}"` : text;
-}
-
-async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
-  const body = await response.text().catch(() => "");
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}${body ? `: ${body.slice(0, 500)}` : ""}`);
-  }
-  try {
-    return JSON.parse(body);
-  } catch (error) {
-    throw new Error(`expected JSON from ${url}, got ${body ? body.slice(0, 500) : "empty response"}: ${error.message}`);
-  }
-}
-
-async function fetchJsonWithTimeout(url, options = {}, timeoutSec = 60) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutSec * 1000);
-  try {
-    return await fetchJson(url, { ...options, signal: controller.signal });
-  } catch (error) {
-    if (error.name === "AbortError") {
-      throw new Error(`timeout after ${timeoutSec}s: ${url}`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function readLongPrompt(args) {
