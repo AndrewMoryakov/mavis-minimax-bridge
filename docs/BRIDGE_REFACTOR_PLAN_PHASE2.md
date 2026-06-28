@@ -216,8 +216,8 @@ Checks:
   cycle (verified at runtime). Moved: the session-id validators, session-URL
   helpers, `fetchMavisJson`, `verifyMavisSession`, `createSession`, `readUsage`,
   `mavisCli`, plus standalone pure `mvsBase`/`usageSummary`. `sendPrompt` stays
-  in `bridge.mjs` (optimization-coupled) and imports `messageUrl` from the
-  module; the four mvs command handlers and the arg-parsing adapters
+  in `bridge.mjs` (optimization-coupled) and uses the top-level destructured
+  `messageUrl`; the four mvs command handlers and the arg-parsing adapters
   `mvsDaemonPort`/`mvsSession` stay and call through the client.
 
 ## Deferred (separate pass, each needs its own focused plan)
