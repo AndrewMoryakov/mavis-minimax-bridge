@@ -11,6 +11,7 @@ import { duetLockStaleMs, withFileLock, withFileLockAsync } from "./lib/duet-loc
 import { escapeNonAscii, readJson, readJsonFromString, readJsonl, stableStringify } from "./lib/json.mjs";
 import { comparablePath, isPathInsideRoot, pathsEqual, realpathOrResolve } from "./lib/path-security.mjs";
 import { makePaths } from "./lib/paths.mjs";
+import { isProbablyText, textDigest, textSummary } from "./lib/text-utils.mjs";
 
 const bridgeDir = path.dirname(fileURLToPath(import.meta.url));
 const {
@@ -427,11 +428,6 @@ function appendBounded(parts, title, text, budget) {
   }
   parts.push(`${blockPrefix}${body}`);
   budget.remaining -= blockPrefix.length + body.length;
-}
-
-function isProbablyText(buffer) {
-  const sample = buffer.subarray(0, Math.min(buffer.length, 8000));
-  return !sample.includes(0);
 }
 
 function listUntrackedPaths(repoRoot) {
@@ -2180,20 +2176,8 @@ function truncateDuetText(text, limit = 2000) {
   return `${text.slice(0, limit - 20)}\n...[truncated]`;
 }
 
-function textDigest(text) {
-  return createHash("sha256").update(text).digest("hex");
-}
-
 function safeFileTimestamp(ts = now()) {
   return ts.replace(/[^0-9A-Za-z_-]/g, "-");
-}
-
-function textSummary(text) {
-  return {
-    chars: text.length,
-    lines: text ? text.split(/\r?\n/).length : 0,
-    sha256: textDigest(text),
-  };
 }
 
 function publicDuetState(state) {
