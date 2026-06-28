@@ -1,9 +1,10 @@
 # Bridge Refactor Plan — Phase 2
 
-Status: complete. Patches 6–7, the shared-text, HTTP-JSON transport, and Mavis
-client extractions, plus the review-driven coverage fixes, all landed. The only
-remaining candidate is `codex-runner` (a judgment-call cluster left for a future
-focused pass); everything else stays in `bridge.mjs` by design.
+Status: complete. Patches 6–7, the shared-text, HTTP-JSON transport, Mavis
+client, and pure codex-exec extractions, plus the review-driven coverage fixes,
+all landed. The leaf-extraction work is exhausted: every remaining candidate
+(the codex driver, duet orchestration, CLI dispatch) stays in `bridge.mjs` by
+design.
 
 Continues `BRIDGE_REFACTOR_PLAN.md`, which is implemented through Patch 5 plus a
 follow-up `path-security` extraction. Phase 1 moved leaf helpers into `lib/`
@@ -54,12 +55,13 @@ are clean; the orchestrator on top of them is not.
 | HTTP-JSON transport (`fetchJson`, `fetchJsonWithTimeout`) | ~327–353 | pure (global fetch + AbortController); also used by opencode `/config` inspection | done — `lib/http-json.mjs` |
 | mvs-client Tier-2 (session helpers, `fetchMavisJson`, `verifyMavisSession`, `createSession`, `readUsage`, `mavisCli`, validators) | ~720–1071 | read-only `config` (injected by reference — safe, mutated in place) | done — `lib/mvs-client.mjs` (`makeMvsClient({ config, runJson })`) |
 | `sendPrompt` | ~777 | drags the optimization subsystem (`addOptimizationContext`/`requiredModel`/`modelSpec`) | keep in `bridge.mjs` |
-| codex-runner (`runCodexExecTurn`, `codexWorkspaceForMode`, …) | ~2805–3526 | large, mixed (process spawn + workspace + Duet step glue) | defer on size/coupling grounds (see note) |
+| codex pure leaves (`parseCodexJsonEvents`, `lastCodexUsage`, `requireCodexMode`, `codexPromptPathForOutput`, `codexIsolationWarning`, `terminateChildProcessTree`) | scattered ~2530–2780 | fully pure (no config, no bridgeDir) | done — `lib/codex-exec.mjs` |
+| codex driver (`runCodexExecTurn`, `codexWorkspaceForMode`, `codexModeArg`, `duetStepPrompt`) | ~2720–2950 | entangled with Duet-step/inbox/budget subsystem | stays in `bridge.mjs` (brainstormed) |
 
-Deferral note: codex-runner's earlier "actively edited right now" reason is gone
-now that `--codex-mode` is committed. The durable reason to defer is its size and
-mixed concerns (it straddles process spawning, scratch-workspace setup, and Duet
-step glue) — extract it only after a focused plan, not as a mechanical move.
+Codex note: a brainstorm split this — the six pure leaves were extracted into
+`lib/codex-exec.mjs`; the driver `runCodexExecTurn` and its arg/workspace/prompt
+companions stay in `bridge.mjs` (Duet-step/inbox/budget entanglement), not a
+mechanical move.
 
 ## Patch 6: Extract `lib/source-context.mjs` (pure leaves only)
 
@@ -220,15 +222,26 @@ Checks:
   `messageUrl`; the four mvs command handlers and the arg-parsing adapters
   `mvsDaemonPort`/`mvsSession` stay and call through the client.
 
-## Deferred (separate pass, each needs its own focused plan)
+## codex leaves (done — brainstormed boundary)
 
-- `lib/codex-runner.mjs` — defer on size/mixed-concerns grounds (above), not on
-  "currently editing".
+- `lib/codex-exec.mjs` — extracted the six pure codex helpers
+  (`parseCodexJsonEvents`, `lastCodexUsage`, `requireCodexMode`,
+  `codexPromptPathForOutput`, `codexIsolationWarning`,
+  `terminateChildProcessTree`). A brainstorm confirmed the boundary: the full
+  `runCodexExecTurn` driver is entangled with the Duet-step/inbox/budget
+  subsystem (~10 deps, same pattern as `sendPrompt`), so it — plus
+  `codexWorkspaceForMode` (bridgeDir-coupled), `codexModeArg` (arg adapter), and
+  `duetStepPrompt` (Duet templates) — stays in `bridge.mjs`. The module is fully
+  pure (no factory, no injection; imports only `spawnSync`).
 
-Never extract early (unchanged from Phase 1):
+Never extract (unchanged from Phase 1):
 
 - CLI dispatch and `usage`.
-- `duet step` / `duet loop` orchestration (and `appendVerifyJournalEntry`).
+- `duet step` / `duet loop` orchestration, the codex driver `runCodexExecTurn`,
+  and `appendVerifyJournalEntry`.
+
+With the codex leaves out, every remaining candidate is code both plans say
+stays in `bridge.mjs`. The leaf-extraction work of Phase 2 is exhausted.
 
 ## Backlog (not Phase-2 gates)
 
@@ -248,8 +261,9 @@ regressions.
 5. Multi-agent review of the committed extractions; closed the MEDIUM verifier
    coverage gaps and a dead bind it surfaced.
 6. `lib/http-json.mjs` — extracted the pure transport leaves.
-7. `lib/http-json.mjs` — extracted the pure transport leaves.
-8. `lib/mvs-client.mjs` — extracted the Mavis client Tier-2 (config-by-ref).
-9. Finish line: the only remaining candidate is `codex-runner` (judgment-call
-   cluster, needs its own brainstorm); everything else is code both plans say
-   stays in `bridge.mjs`.
+7. `lib/mvs-client.mjs` — extracted the Mavis client Tier-2 (config-by-ref).
+8. `lib/codex-exec.mjs` — extracted the pure codex leaves (brainstormed boundary;
+   the driver stays in `bridge.mjs`).
+9. Finish line: leaf extraction exhausted. Everything that remains — the codex
+   driver, duet orchestration, CLI dispatch — is code both plans say stays in
+   `bridge.mjs`.
