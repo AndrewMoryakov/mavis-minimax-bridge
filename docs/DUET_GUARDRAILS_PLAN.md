@@ -1,5 +1,9 @@
 # Duet Guardrails Plan
 
+Status: proposal-only planning note. Commands in this file may reference future
+flags that are intentionally not implemented yet. Use `README.md`,
+`docs/COMMANDS.md`, and `node .\bridge.mjs duet help` for runnable commands.
+
 ## Goal
 
 Make Duet Relay reliable for serious multi-agent review runs, especially when
@@ -11,7 +15,7 @@ writes, and missing context.
 
 ## Background
 
-The FreedomTunnelPlatform live validation exposed two gaps:
+A live validation against an external project exposed two gaps:
 
 1. A Codex step can mark the relay `done` or `human_escalation` before MiniMax
    acts, even when the goal asks for both agents.
@@ -93,7 +97,7 @@ agent requirement.
 #### Readonly Watch
 
 ```powershell
-node .\bridge.mjs duet loop --yes --watch-readonly "O:\user files\Projects\FreedomTunnelPlatform"
+node .\bridge.mjs duet loop --yes --watch-readonly "C:\path\to\external-project"
 ```
 
 Behavior:
@@ -137,7 +141,7 @@ Add bounded read-only source context for external project reviews.
 ```powershell
 node .\bridge.mjs duet start `
   --goal .\goal.local.md `
-  --include-readonly "O:\user files\Projects\FreedomTunnelPlatform" `
+  --include-readonly "C:\path\to\external-project" `
   --profile review
 ```
 
@@ -233,12 +237,12 @@ Scope:
 
 ### Patch 5: Live Validation
 
-Repeat the FreedomTunnelPlatform review scenario:
+Repeat the external-project review scenario:
 
 ```powershell
-node .\bridge.mjs duet start --goal .\freedom-review-goal.local.md --profile review --include-readonly "O:\user files\Projects\FreedomTunnelPlatform" --baton codex --max-iterations 18 --max-rounds 12 --max-codex-steps 6 --max-minimax-steps 6 --max-tokens 2500000 --force
-node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --watch-readonly "O:\user files\Projects\FreedomTunnelPlatform" --max-rounds 12 --max-codex-steps 6 --max-minimax-steps 6 --max-tokens 2500000
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax --watch-readonly "O:\user files\Projects\FreedomTunnelPlatform" --max-rounds 12 --max-codex-steps 6 --max-minimax-steps 6 --max-tokens 2500000
+node .\bridge.mjs duet start --goal .\external-review-goal.local.md --profile review --include-readonly "C:\path\to\external-project" --baton codex --max-iterations 18 --max-rounds 12 --max-codex-steps 6 --max-minimax-steps 6 --max-tokens 2500000 --force
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --watch-readonly "C:\path\to\external-project" --max-rounds 12 --max-codex-steps 6 --max-minimax-steps 6 --max-tokens 2500000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --watch-readonly "C:\path\to\external-project" --max-rounds 12 --max-codex-steps 6 --max-minimax-steps 6 --max-tokens 2500000
 node .\bridge.mjs duet report
 ```
 

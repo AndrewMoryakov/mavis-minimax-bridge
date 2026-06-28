@@ -57,6 +57,10 @@ Recreate base runtime files in another directory:
 node .\scripts\init-runtime.mjs --target C:\path\to\bridge-runtime
 ```
 
+This only copies the runtime skeleton. The CLI uses the directory that contains
+`bridge.mjs` as its active runtime root, so normal installs should run
+`npm run init` from the cloned repository root.
+
 Overwrite existing base runtime files only when you mean it:
 
 ```powershell

@@ -102,15 +102,22 @@ test("createSession posts to the session endpoint", async (t) => {
 });
 
 test("readUsage skips non-mavis and denied sessions, summarizes valid ones", () => {
+  let calls = 0;
   const c = client(
     { denySessions: ["mvs_denied"] },
-    () => ({ summary: { turns: 1, inputTokens: 10, outputTokens: 5 }, rows: [] }),
+    () => {
+      calls += 1;
+      return { summary: { turns: 1, inputTokens: 10, outputTokens: 5 }, rows: [] };
+    },
   );
   assert.equal(c.readUsage("").skipped, true);
   assert.equal(c.readUsage("plain-id").skipped, true);
   assert.equal(c.readUsage("mvs_denied").skipped, true);
+  assert.equal(c.readUsage("mvs_bad&echo boom").skipped, true);
+  assert.equal(calls, 0);
 
   const ok = c.readUsage("mvs_good");
   assert.equal(ok.skipped, false);
   assert.equal(ok.summary.turns, 1);
+  assert.equal(calls, 1);
 });

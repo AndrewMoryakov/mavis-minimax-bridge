@@ -32,6 +32,13 @@ test("shouldSkipSourceContextPath skips runtime, vcs, and local files", (t) => {
   assert.equal(shouldSkipSourceContextPath("live-smoke-foo/x.txt"), true);
   assert.equal(shouldSkipSourceContextPath(".env"), true);
   assert.equal(shouldSkipSourceContextPath("sub/.env"), true);
+  assert.equal(shouldSkipSourceContextPath(".env.local"), true);
+  assert.equal(shouldSkipSourceContextPath("sub/.env.production"), true);
+  assert.equal(shouldSkipSourceContextPath(".envrc"), true);
+  assert.equal(shouldSkipSourceContextPath(".npmrc"), true);
+  assert.equal(shouldSkipSourceContextPath("secrets.json"), true);
+  assert.equal(shouldSkipSourceContextPath("keys/id_ed25519"), true);
+  assert.equal(shouldSkipSourceContextPath("certs/client.pem"), true);
   assert.equal(shouldSkipSourceContextPath("notes.local.md"), true);
 
   assert.equal(shouldSkipSourceContextPath("src/app.js"), false);

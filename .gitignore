@@ -16,4 +16,7 @@
 /examples/duet-tetris-browser/game.js
 node_modules/
 .env
+.env.*
+.envrc
+/docs/AUDIT_FINDINGS.md
 .DS_Store

@@ -269,6 +269,18 @@ test("duet packet export is a redacted projection by default and supports raw lo
     runBridge(dir, ["duet", "packet", "export", "--agent", "minimax", "--out", path.join(other, "packet.local.json")]),
     /--out path escapes bridge root/,
   );
+
+  try {
+    fs.writeFileSync(path.join(other, "outside.md"), "outside", "utf8");
+    fs.symlinkSync(path.join(other, "outside.md"), path.join(dir, "packet-link.local.md"), "file");
+  } catch (error) {
+    t.skip(`symlink creation unavailable: ${error.message}`);
+    return;
+  }
+  fails(
+    runBridge(dir, ["duet", "packet", "export", "--agent", "minimax", "--raw", "--out", "packet-link.local.md"]),
+    /--out must not target a symlink/,
+  );
 });
 
 test("duet packet export validates agent and marks truncation visibly", (t) => {
@@ -378,7 +390,9 @@ test("duet step minimax dry-run rejects terminal and max-iteration states", (t) 
   const limitDir = sandbox(t);
   writeFile(limitDir, "goal.md", "Limit step goal");
   ok(runBridge(limitDir, ["duet", "init", "--goal", "goal.md", "--baton", "minimax", "--max-iterations", "1"]));
-  fails(runBridge(limitDir, ["duet", "step", "--agent", "minimax", "--dry-run"]), /maxIterations reached/);
+  const limitDryRun = ok(runBridge(limitDir, ["duet", "step", "--agent", "minimax", "--dry-run"]));
+  assert.equal(limitDryRun.state.iteration, 1);
+  assert.equal(limitDryRun.state.maxIterations, 1);
 });
 
 test("duet step codex dry-run validates baton and spends no tokens", (t) => {
@@ -741,6 +755,35 @@ test("duet loop dry-run validates required agents", (t) => {
   );
 });
 
+test("duet loop rejects unknown guardrail flags and respects verifier separator", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Unknown flag goal");
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md"]));
+
+  fails(
+    runBridge(dir, ["duet", "loop", "--dry-run", "--watch-readonly", "somewhere"]),
+    /duet loop does not support --watch-readonly/,
+  );
+  fails(
+    runBridge(dir, ["duet", "start", "--goal", "goal.md", "--profile", "review", "--force"]),
+    /duet start does not support --profile/,
+  );
+  writeFile(dir, "handoff.md", "Unknown pass flag handoff");
+  fails(
+    runBridge(dir, ["duet", "pass", "--from", "codex", "--handoff", "handoff.md", "--dry-run"]),
+    /duet pass does not support --dry-run/,
+  );
+  fails(
+    runBridge(dir, ["duet", "note", "--agent", "codex", "--note", "handoff.md", "--dry-run"]),
+    /duet note does not support --dry-run/,
+  );
+
+  writeFile(dir, "verify.mjs", "process.exit(0);");
+  const dryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run", "--verifier", "verify.mjs", "--", "--yes"]));
+  assert.equal(dryRun.event, "duet-loop-dry-run");
+  assert.deepEqual(dryRun.verifier.args, ["--yes"]);
+});
+
 test("duet loop yes applies fake steps until done without leaking by default", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_LOOP_DONE_123";
@@ -1035,6 +1078,8 @@ test("duet transcript export redacts by default and raw export requires explicit
 
 test("duet transcript export supports markdown output and protects raw output paths", (t) => {
   const dir = sandbox(t);
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-transcript-outside-"));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
   const secret = "SECRET_TRANSCRIPT_MARKDOWN_101";
   writeFile(dir, "goal.md", `Goal ${secret}`);
   writeFile(dir, "handoff.md", `Handoff ${secret}`);
@@ -1065,6 +1110,23 @@ test("duet transcript export supports markdown output and protects raw output pa
   const rawOut = ok(runBridge(dir, ["duet", "transcript", "export", "--raw", "--out", "transcript.local.json"]));
   assert.equal(rawOut.raw, true);
   assert.match(fs.readFileSync(path.join(dir, "transcript.local.json"), "utf8"), new RegExp(secret));
+
+  fails(
+    runBridge(dir, ["duet", "transcript", "export", "--out", path.join(other, "transcript.md")]),
+    /--out path escapes bridge root/,
+  );
+
+  try {
+    fs.writeFileSync(path.join(other, "outside.md"), "outside", "utf8");
+    fs.symlinkSync(path.join(other, "outside.md"), path.join(dir, "transcript-link.local.md"), "file");
+  } catch (error) {
+    t.skip(`symlink creation unavailable: ${error.message}`);
+    return;
+  }
+  fails(
+    runBridge(dir, ["duet", "transcript", "export", "--raw", "--out", "transcript-link.local.md"]),
+    /--out must not target a symlink/,
+  );
 });
 
 test("duet verify runs node verifier with redacted output by default and raw output when requested", (t) => {
@@ -1284,7 +1346,7 @@ test("duet validates bad inputs and damaged runtime state", (t) => {
   fails(runBridge(dir, ["duet", "show"]), /duet journal is empty/);
 });
 
-test("duet lock blocks overlapping mutating commands and stale lock is cleared", (t) => {
+test("duet lock blocks overlapping mutating commands and refuses stale locks", (t) => {
   const dir = sandbox(t);
   writeFile(dir, "goal.md", "Lock goal");
   writeFile(dir, "handoff.md", "Lock handoff");
@@ -1296,8 +1358,11 @@ test("duet lock blocks overlapping mutating commands and stale lock is cleared",
 
   const stale = new Date(Date.now() - 11 * 60 * 1000);
   fs.utimesSync(lockPath, stale, stale);
-  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]));
-  assert.equal(readJson(dir, "duet-state.json").baton, "minimax");
+  fails(
+    runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "minimax", "--handoff", "handoff.md"]),
+    /refusing automatic removal/,
+  );
+  assert.equal(readJson(dir, "duet-state.json").baton, "codex");
 });
 
 test("duet lock is cleaned up after failed mutating commands", (t) => {
@@ -1407,6 +1472,30 @@ test("ask dry-run attaches dirty worktree source context by default", (t) => {
   assert.match(dryRun.sourceContext.text, /UNTRACKED_SOURCE_VISIBILITY_SENTINEL/);
   assert.match(dryRun.sourceContext.text, /UNICODE_UNTRACKED_SENTINEL/);
   assert.match(dryRun.prompts[0].text, /<source_context/);
+});
+
+test("ask dry-run excludes untracked secret-looking files", (t) => {
+  const dir = sandbox(t);
+  git(dir, ["init"]);
+  git(dir, ["config", "user.email", "test@example.invalid"]);
+  git(dir, ["config", "user.name", "Bridge Test"]);
+  writeFile(dir, "tracked.txt", "before\n");
+  git(dir, ["add", ...bridgeRuntimeGitPaths(dir), "tracked.txt"]);
+  git(dir, ["commit", "-m", "seed"]);
+
+  writeFile(dir, "task.md", "Review secret exclusions.");
+  writeFile(dir, ".npmrc", "NPMRC_SECRET_SHOULD_NOT_APPEAR\n");
+  writeFile(dir, "secrets.json", "JSON_SECRET_SHOULD_NOT_APPEAR\n");
+  writeFile(dir, "id_ed25519", "KEY_SECRET_SHOULD_NOT_APPEAR\n");
+  writeFile(dir, "visible.txt", "VISIBLE_UNTRACKED_CONTEXT\n");
+
+  const dryRun = ok(runBridge(dir, ["ask", "--dry-run", "--task", "task.md", "--raw"]));
+  assert.match(dryRun.sourceContext.text, /VISIBLE_UNTRACKED_CONTEXT/);
+  assert.match(dryRun.sourceContext.text, /\.npmrc/);
+  assert.match(dryRun.sourceContext.text, /skipped: excluded/);
+  assert.doesNotMatch(dryRun.sourceContext.text, /NPMRC_SECRET_SHOULD_NOT_APPEAR/);
+  assert.doesNotMatch(dryRun.sourceContext.text, /JSON_SECRET_SHOULD_NOT_APPEAR/);
+  assert.doesNotMatch(dryRun.sourceContext.text, /KEY_SECRET_SHOULD_NOT_APPEAR/);
 });
 
 test("ask dry-run can disable source context", (t) => {
@@ -1559,6 +1648,10 @@ test("ask include validates source context mode and path boundaries", (t) => {
     runBridge(dir, ["ask", "--dry-run", "--task", "task.md", "--include", path.join(other, "outside.txt")]),
     /--include path escapes bridge root/,
   );
+  fails(
+    runBridge(dir, ["ask", "--dry-run", "--task", path.join(other, "outside.txt")]),
+    /--task path escapes bridge root/,
+  );
 });
 
 test("ask include handles symlink escapes and repeated in-root directories", (t) => {
@@ -1658,6 +1751,23 @@ test("duet runtime files are written to the real directory when path contains sp
   assert.doesNotMatch(state.runtimeFiles.duetState.path, /%20/);
 });
 
+test("token-stats can invoke a configured mavis.cmd path containing spaces", (t) => {
+  const dir = sandboxWithSpace(t);
+  const binDir = path.join(dir, "fake bin");
+  fs.mkdirSync(binDir);
+  const mavisCmd = path.join(binDir, "mavis test.cmd");
+  fs.writeFileSync(
+    mavisCmd,
+    "@echo off\r\necho {\"summary\":{\"turns\":1,\"inputTokens\":42,\"outputTokens\":7},\"rows\":[{\"model\":\"minimax/MiniMax-M3\",\"inputTokens\":42,\"outputTokens\":7}]}\r\n",
+    "utf8",
+  );
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ mavisCli: mavisCmd }), "utf8");
+
+  const stats = ok(runBridge(dir, ["token-stats", "--session", "mvs_good"]));
+  assert.equal(stats.usage.skipped, false);
+  assert.equal(stats.usage.summary.inputTokens, 42);
+});
+
 test("runtime files, duet temp files, and local scratch files are git-ignored", () => {
   const samples = [
     "ledger.jsonl",
@@ -1670,6 +1780,9 @@ test("runtime files, duet temp files, and local scratch files are git-ignored", 
     "handoff.local.md",
     ".codex-isolated-2026-06-28T00-00-00-000Z-abc123.local/",
     "live-smoke-tetris-zero-20260627/index.html",
+    ".env.local",
+    ".envrc",
+    "docs/AUDIT_FINDINGS.md",
   ];
 
   for (const sample of samples) {
@@ -1714,6 +1827,15 @@ test("installable skill and prompt surfaces document duet relay", () => {
   const runtimeFiles = fs.readFileSync(path.join(repoRoot, "docs/RUNTIME_FILES.md"), "utf8");
   assert.match(runtimeFiles, /\.codex-isolated-\*\.local\//, "runtime docs should list isolated Codex scratch directories");
   assert.match(runtimeFiles, /disposable/, "runtime docs should explain isolated scratch cleanup");
+  assert.match(runtimeFiles, /active runtime root/, "runtime docs should clarify clone-local runtime scope");
+
+  const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
+  assert.match(readme, /npm install -g.*not supported/s, "README should clarify clone-only install");
+  assert.match(readme, /Exec mode can modify bridge\s+repository files and local runtime files/, "README should disclose exec-mode write access");
+  const commandsDoc = fs.readFileSync(path.join(repoRoot, "docs/COMMANDS.md"), "utf8");
+  assert.match(commandsDoc, /Exec mode can modify bridge repository\s+files and local runtime files/, "commands docs should disclose exec-mode write access");
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  assert.equal(packageJson.private, true, "package should not be publishable to npm by accident");
 
   const runbook = fs.readFileSync(path.join(repoRoot, "docs/LIVE_RUNBOOK.md"), "utf8");
   assert.match(runbook, /duet start --goal/, "live runbook should start with duet start");
@@ -1721,4 +1843,20 @@ test("installable skill and prompt surfaces document duet relay", () => {
   assert.match(runbook, /duet loop --yes/, "live runbook should document the live loop");
   assert.match(runbook, /duet report/, "live runbook should finish with report");
   assert.match(runbook, /can spend Codex\/OpenAI and MiniMax tokens/, "live runbook should warn about token spending");
+});
+
+test("install scripts reject unknown options before writing", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-install-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  for (const script of ["install-mavis-skill.mjs", "install-codex-skill.mjs", "install-codex-slash.mjs"]) {
+    const result = spawnSync(process.execPath, [path.join(repoRoot, "scripts", script), "--dryrun", "--codex-home", dir, "--mavis-root", dir], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0, `${script}\n${result.stdout}${result.stderr}`);
+    assert.match(`${result.stdout}${result.stderr}`, /unknown option: --dryrun/);
+  }
+  assert.equal(fs.existsSync(path.join(dir, "skills")), false);
+  assert.equal(fs.existsSync(path.join(dir, "prompts")), false);
 });

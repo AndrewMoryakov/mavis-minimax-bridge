@@ -7,11 +7,16 @@ import { fileURLToPath } from "node:url";
 const scriptRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(scriptRepoRoot, "skills", "bridge", "SKILL.md");
 const args = new Map();
+const allowedArgs = new Set(["mavis-root", "repo-root", "dry-run", "help", "h"]);
 
 for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
   if (!arg.startsWith("--")) continue;
   const key = arg.slice(2);
+  if (!allowedArgs.has(key)) {
+    console.error(`unknown option: --${key}`);
+    process.exit(1);
+  }
   const next = process.argv[i + 1];
   if (!next || next.startsWith("--")) {
     args.set(key, "1");

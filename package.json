@@ -1,7 +1,7 @@
 {
   "name": "mavis-minimax-bridge",
   "version": "0.1.0",
-  "private": false,
+  "private": true,
   "description": "Local JSONL bridge for controlled Codex-to-MiniMax Code collaboration and token optimization checks.",
   "type": "module",
   "engines": {
@@ -10,6 +10,35 @@
   "bin": {
     "mavis-minimax-bridge": "./bridge.mjs"
   },
+  "files": [
+    "bridge.mjs",
+    "lib/",
+    "scripts/",
+    "skills/",
+    "prompts/",
+    "scaffold/",
+    "examples/config.example.json",
+    "examples/duet-simple-orders/input.json",
+    "examples/duet-simple-orders/TASK.md",
+    "examples/duet-simple-orders/verify.mjs",
+    "examples/duet-tetris-browser/MINIMAL_GOAL.md",
+    "examples/duet-tetris-browser/TASK.md",
+    "examples/duet-tetris-browser/verify.mjs",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "docs/COMMANDS.md",
+    "docs/USAGE.md",
+    "docs/LETS_GO.md",
+    "docs/LIVE_RUNBOOK.md",
+    "docs/RESTORE_AFTER_UPDATE.md",
+    "docs/RUNTIME_FILES.md",
+    "docs/TESTING.md",
+    "docs/DUET_RELAY.md",
+    "docs/DUET_ACCEPTANCE_TEST.md",
+    "docs/DUET_TETRIS_BROWSER_TEST.md"
+  ],
   "scripts": {
     "check": "node --check ./bridge.mjs",
     "test": "node --test",
@@ -27,7 +56,6 @@
     "mode": "node ./bridge.mjs mode list",
     "tokens": "node ./bridge.mjs token-stats --ledger",
     "audit": "node ./bridge.mjs audit",
-    "optimize:check:safe": "node ./bridge.mjs optimize-check --skip-canary",
     "optimize:check": "node ./bridge.mjs optimize-check --skip-canary",
     "optimize:check:canary": "node ./bridge.mjs optimize-check --yes"
   },

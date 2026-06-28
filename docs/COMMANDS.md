@@ -273,9 +273,11 @@ shell history or process inspection.
 
 ## Duet Relay
 
-These commands coordinate Duet Relay. All listed commands are local-only except
-explicit `duet step --agent minimax --yes` and
-`duet step --agent codex --yes`, which can call an agent and spend tokens:
+These commands coordinate Duet Relay. `duet start`, `duet init`, `duet show`,
+`duet next`, packet/report/transcript export, dry-runs, `pass`, `note`, and
+`verify` are local-only. `duet step --agent minimax --yes`,
+`duet step --agent codex --yes`, and `duet loop --yes` can call agents and
+spend tokens:
 
 ```powershell
 node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12
@@ -322,7 +324,9 @@ canary inputs when the current working directory is not the bridge root. Use
 
 Mutating duet commands use a short-lived `duet.lock` file to avoid overlapping
 updates from two CLI processes. A lock older than ten minutes is treated as
-stale.
+stale. The bridge refuses to remove stale locks automatically because that can
+race with another writer; verify that no bridge command is running, then remove
+the lock manually if recovery is needed.
 
 Use `duet pass` to transfer the baton or stop the relay with `done` /
 `human_escalation`. `--max-iterations` is a safety limit; when reached, the
@@ -365,8 +369,10 @@ turn. This can spend OpenAI/Codex tokens. The bridge invokes `codex exec` with
 bridge timeout. `--codex-mode exec` runs in the bridge workspace with
 `workspace-write`; `--codex-mode isolated` runs in an empty scratch workspace
 with `read-only` and `--skip-git-repo-check`. This reduces workspace exposure,
-but it is not a hard security boundary. The last Codex message is written to a pending
-`.local.md` handoff and applied through the same hardened `duet pass` path.
+but it is not a hard security boundary. Exec mode can modify bridge repository
+files and local runtime files; use isolated mode for safer review-only relay
+turns. The last Codex message is written to a pending `.local.md` handoff and
+applied through the same hardened `duet pass` path.
 
 Use `duet loop --dry-run` to preview a future autonomous loop without spending
 tokens. It does not run Codex, MiniMax, or a verifier. It reports whether the

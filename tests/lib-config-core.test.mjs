@@ -56,6 +56,11 @@ test("validateConfig rejects invalid config shapes", () => {
     () => normalizeConfig({ env: { MAVIS_CONTEXT_BUDGET_PROFILE: "turbo" } }),
     /MAVIS_CONTEXT_BUDGET_PROFILE/,
   );
+  assert.throws(() => normalizeConfig({ maxInputToken: 123 }), /unknown config key: maxInputToken/);
+  assert.throws(
+    () => normalizeConfig({ env: { MAVIS_CONTEXT_BUDGET_PROFIL: "max" } }),
+    /unknown env config key: MAVIS_CONTEXT_BUDGET_PROFIL/,
+  );
 
   const config = normalizeConfig({});
   assert.doesNotThrow(() => validateConfig(config));

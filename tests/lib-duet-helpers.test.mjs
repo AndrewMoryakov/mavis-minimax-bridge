@@ -52,19 +52,18 @@ test("duet lock helper serializes access and cleans up", (t) => {
   assert.equal(fs.existsSync(lockPath), false);
 });
 
-test("duet lock helper removes stale locks before acquiring", (t) => {
+test("duet lock helper refuses stale locks instead of removing them unsafely", (t) => {
   const dir = sandbox(t);
   const lockPath = path.join(dir, "duet.lock");
   fs.writeFileSync(lockPath, "stale", "utf8");
   const old = new Date(Date.now() - 120000);
   fs.utimesSync(lockPath, old, old);
 
-  withFileLock(() => {
-    const payload = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-    assert.equal(payload.createdAt, "2026-01-01T00:00:00.000Z");
-  }, { lockPath, staleMs: 1000, now: () => "2026-01-01T00:00:00.000Z" });
-
-  assert.equal(fs.existsSync(lockPath), false);
+  assert.throws(
+    () => withFileLock(() => null, { lockPath, staleMs: 1000, now: () => "2026-01-01T00:00:00.000Z" }),
+    /refusing automatic removal/,
+  );
+  assert.equal(fs.readFileSync(lockPath, "utf8"), "stale");
 });
 
 test("async duet lock helper cleans up after awaited work", async (t) => {

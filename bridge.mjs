@@ -11,9 +11,9 @@ import { duetLockStaleMs, withFileLock, withFileLockAsync } from "./lib/duet-loc
 import { escapeNonAscii, readJson, readJsonFromString, readJsonl, stableStringify } from "./lib/json.mjs";
 import { comparablePath, isPathInsideRoot, pathsEqual, realpathOrResolve } from "./lib/path-security.mjs";
 import { makePaths } from "./lib/paths.mjs";
-import { isProbablyText, textDigest, textSummary } from "./lib/text-utils.mjs";
+import { textDigest, textSummary } from "./lib/text-utils.mjs";
 import { makeSourceContext, readSourceSnippet } from "./lib/source-context.mjs";
-import { makeVerifier, verifierArgs } from "./lib/verifier.mjs";
+import { makeVerifier, verifierArgs, verifierEnv } from "./lib/verifier.mjs";
 import { fetchJson, fetchJsonWithTimeout } from "./lib/http-json.mjs";
 import { makeMvsClient } from "./lib/mvs-client.mjs";
 import {
@@ -40,7 +40,7 @@ const duetMaxEntryChars = 20000;
 const packageName = "mavis-minimax-bridge";
 const sourceIncludeMaxFiles = 80;
 const sourceIncludeMaxDirs = 160;
-const { includedSourceFiles } = makeSourceContext({
+const { includedSourceFiles, shouldSkipSourceContextPath } = makeSourceContext({
   bridgeDir,
   paths,
   limits: { maxFiles: sourceIncludeMaxFiles, maxDirs: sourceIncludeMaxDirs },
@@ -103,8 +103,25 @@ function now() {
 
 function appendJsonl(filePath, event) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.appendFileSync(filePath, `${JSON.stringify({ ts: now(), ...event })}\n`, "utf8");
+  const handle = fs.openSync(filePath, "a");
+  try {
+    fs.writeSync(handle, `${JSON.stringify({ ts: now(), ...event })}\n`, null, "utf8");
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
 }
+
+process.on("uncaughtException", (error) => {
+  try {
+    appendJsonl(ledgerPath, { event: "uncaught-exception", message: error.message });
+  } catch (_) {
+    // Last-ditch crash reporting must never create a second exception.
+  }
+  console.error(`[bridge] uncaught exception: ${error.message}`);
+  process.exitCode = 1;
+  setImmediate(() => process.exit(1));
+});
 
 function printJson(value) {
   const json = JSON.stringify(value, null, 2);
@@ -127,7 +144,7 @@ function usage() {
   node .\\bridge.mjs canary-estimate [--long-prompt <file>] [--repeat-long <n>]
   node .\\bridge.mjs canary --yes [--port <port>]
   node .\\bridge.mjs optimize-check [--yes] [--session <mvs-id>] [--port <port>] [--skip-canary] [--long-prompt <file>] [--repeat-long <n>]
-  node .\\bridge.mjs ask --yes --mode review-only --task <file> [--task <followup-file> ...] [--include <path> ...] [--source-context auto|off] [--dry-run] [--port <port>]
+  node .\\bridge.mjs ask --yes --mode review-only|patch-proposal --task <file> [--task <followup-file> ...] [--include <path> ...] [--source-context auto|off] [--dry-run] [--port <port>]
   node .\\bridge.mjs mvs-status [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-peers [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
@@ -138,8 +155,8 @@ function usage() {
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
   node .\\bridge.mjs duet packet export --agent codex|minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
-  node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--codex-mode isolated|exec] [--raw] [--max-packet-chars <n>] [--port <port>]
-  node .\\bridge.mjs duet loop --dry-run [--profile smoke] [--codex-mode isolated|exec] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
+  node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--codex-mode isolated|exec] [--raw] [--max-packet-chars <n>] [--port <port> for minimax]
+  node .\\bridge.mjs duet loop --dry-run|--yes [--profile smoke] [--codex-mode isolated|exec] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
   node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
@@ -296,7 +313,18 @@ function argValues(args, name) {
   return values;
 }
 
+function assertKnownOptions(args, allowed, context) {
+  const parsed = verifierArgs(args);
+  for (const arg of parsed.options) {
+    if (String(arg).startsWith("--") && !allowed.has(arg)) {
+      throw new Error(`${context} does not support ${arg}`);
+    }
+  }
+  return parsed;
+}
+
 function findServeProcesses() {
+  if (process.platform !== "win32") return [];
   const ps = `
 $items = Get-CimInstance Win32_Process |
   Where-Object { $_.Name -eq 'opencode.exe' -and $_.CommandLine -match 'serve --port' } |
@@ -325,13 +353,15 @@ function runJson(command, commandArgs, options = {}) {
   const spawn = command.toLowerCase().endsWith(".cmd") || command.toLowerCase().endsWith(".bat")
     ? {
         command: process.env.ComSpec || "cmd.exe",
-        args: ["/d", "/s", "/c", [quoteCmd(command), ...commandArgs.map(quoteCmd)].join(" ")],
+        args: ["/d", "/s", "/c", `"${[quoteCmd(command), ...commandArgs.map(quoteCmd)].join(" ")}"`],
+        windowsVerbatimArguments: true,
       }
     : { command, args: commandArgs };
   const result = spawnSync(spawn.command, spawn.args, {
     cwd: options.cwd || process.cwd(),
     encoding: "utf8",
     env: { ...process.env, ...(options.env || {}) },
+    windowsVerbatimArguments: Boolean(spawn.windowsVerbatimArguments),
   });
   if (result.error) {
     throw new Error(`${command} ${commandArgs.join(" ")} failed: ${result.error.message}`);
@@ -346,20 +376,82 @@ function runJson(command, commandArgs, options = {}) {
 
 function quoteCmd(value) {
   const text = String(value);
-  return /[\s"&<>|^]/.test(text) ? `"${text.replace(/"/g, '\\"')}"` : text;
+  if (text.length === 0) return "\"\"";
+  return `"${text.replace(/(["^&|<>()%])/g, "^$1")}"`;
 }
 
 function readLongPrompt(args) {
   const longPromptPath = argValue(args, "--long-prompt");
   if (!longPromptPath) return null;
-  const resolved = path.resolve(longPromptPath);
-  const text = fs.readFileSync(resolved, "utf8");
   const maxChars = Number(config.maxLongPromptChars || 160000);
-  if (text.length > maxChars) {
-    throw new Error(`long prompt too large: ${text.length} chars > ${maxChars}`);
-  }
-  return { path: resolved, text, chars: text.length };
+  const { path: realPath, text } = readTrustedText(longPromptPath, "--long-prompt", maxChars);
+  return { path: realPath, text, chars: text.length };
 }
+
+const duetStartAllowedOptions = new Set([
+  "--goal",
+  "--baton",
+  "--max-iterations",
+  "--force",
+  "--raw",
+  "--max-rounds",
+  "--max-codex-steps",
+  "--max-minimax-steps",
+  "--max-tokens",
+  "--verifier",
+]);
+
+const duetInitAllowedOptions = new Set([
+  "--goal",
+  "--baton",
+  "--max-iterations",
+  "--force",
+  "--raw",
+]);
+
+const duetLoopAllowedOptions = new Set([
+  "--dry-run",
+  "--yes",
+  "--raw",
+  "--force",
+  "--profile",
+  "--codex-mode",
+  "--max-packet-chars",
+  "--max-rounds",
+  "--max-codex-steps",
+  "--max-minimax-steps",
+  "--max-tokens",
+  "--require-agents",
+  "--verifier",
+  "--verifier-timeout-sec",
+]);
+
+const duetStepAllowedOptions = new Set([
+  "--agent",
+  "--dry-run",
+  "--yes",
+  "--codex-mode",
+  "--raw",
+  "--max-packet-chars",
+  "--port",
+  "--daemon-port",
+  "--force",
+]);
+
+const duetPassAllowedOptions = new Set([
+  "--from",
+  "--to",
+  "--handoff",
+  "--status",
+  "--force",
+  "--raw",
+]);
+
+const duetNoteAllowedOptions = new Set([
+  "--agent",
+  "--note",
+  "--raw",
+]);
 
 function requireSpendingApproval(args, command) {
   if (!args.includes("--yes")) {
@@ -445,32 +537,71 @@ function readUntrackedSnippet(repoRoot, relativePath, perFileLimit) {
   if (!fullPath.startsWith(rootWithSep)) {
     return `### ${relativePath}\n\n[skipped: path escapes repository root]`;
   }
+  const normalizedRelative = relativePath.replace(/\\/g, "/");
+  if (shouldSkipSourceContextPath(normalizedRelative)) {
+    return `### ${relativePath}\n\n[skipped: excluded]`;
+  }
   if (!fs.existsSync(fullPath)) {
     return `### ${relativePath}\n\n[skipped: not a regular file]`;
   }
-  const stats = fs.statSync(fullPath);
-  if (!stats.isFile()) {
-    return `### ${relativePath}\n\n[skipped: not a regular file]`;
+  const realPath = realpathOrResolve(fullPath);
+  if (!isPathInsideRoot(repoRoot, realPath)) {
+    return `### ${relativePath}\n\n[skipped: symlink escapes repository root]`;
   }
+  const snippet = readSourceSnippet(realPath, relativePath, perFileLimit);
+  if (!snippet.included) {
+    return snippet.text;
+  }
+  return snippet.text;
+}
 
-  const maxBytes = Math.max(4096, perFileLimit * 4);
-  const bytesToRead = Math.min(stats.size, maxBytes);
-  const buffer = Buffer.allocUnsafe(bytesToRead);
-  let bytesRead = 0;
-  const fd = fs.openSync(fullPath, "r");
+function safeRmSync(targetPath, options = {}) {
+  if (!targetPath) return;
   try {
-    bytesRead = fs.readSync(fd, buffer, 0, bytesToRead, 0);
-  } finally {
-    fs.closeSync(fd);
+    fs.rmSync(targetPath, { force: true, maxRetries: 5, retryDelay: 100, ...options });
+  } catch (error) {
+    appendJsonl(ledgerPath, { event: "cleanup-warning", path: targetPath, message: error.message });
   }
-  const prefix = buffer.subarray(0, bytesRead);
-  if (!isProbablyText(prefix)) {
-    return `### ${relativePath}\n\n[skipped: binary-looking file, ${stats.size} bytes]`;
+}
+
+function codexExecEnv() {
+  return verifierEnv();
+}
+
+function readTrustedText(filePath, label, maxChars = null, options = {}) {
+  if (!filePath) throw new Error(`${label} is required`);
+  const resolved = path.resolve(process.cwd(), filePath);
+  if (String(filePath).includes("\0")) throw new Error(`${label} must not contain NUL bytes`);
+  if (!fs.existsSync(resolved)) throw new Error(`${label} file not found: ${resolved}`);
+  const realPath = realpathOrResolve(resolved);
+  if (options.insideBridge !== false && !isPathInsideRoot(bridgeDir, realPath)) {
+    throw new Error(`${label} path escapes bridge root: ${resolved}`);
   }
-  const text = prefix.toString("utf8");
-  const truncated = stats.size > bytesRead || text.length > perFileLimit;
-  const body = truncated ? `${text.slice(0, perFileLimit)}\n\n[truncated: file is ${stats.size} bytes]` : text;
-  return `### ${relativePath}\n\n\`\`\`\n${body}\n\`\`\``;
+  const stats = fs.statSync(realPath);
+  if (!stats.isFile()) {
+    throw new Error(`${label} is not a regular file: ${realPath}`);
+  }
+  const text = fs.readFileSync(realPath, "utf8");
+  if (maxChars !== null && text.length > maxChars) {
+    throw new Error(`${label} file is too large (${text.length} chars); keep entries <= ${maxChars} chars`);
+  }
+  return { path: realPath, text };
+}
+
+function renderDuetUserText(text) {
+  return `\`\`\`text\n${String(text).replace(/```/g, "``\\`")}\n\`\`\``;
+}
+
+function parseTrustedStatusLine(answer) {
+  const lines = String(answer || "").split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const explicit = line.match(/^\s*status\s*:\s*(running|done|human_escalation)\s*$/i);
+    if (explicit) return explicit[1].toLowerCase();
+    const bare = line.match(/^\s*(running|done|human_escalation)\s*$/i);
+    return bare ? bare[1].toLowerCase() : null;
+  }
+  return null;
 }
 
 function buildAskSourceContext(args, taskPaths = []) {
@@ -1299,13 +1430,14 @@ function auditVerdict({ route, ledgerEntries, pluginEntries, promptCache }) {
   const truncatedTurns = ledgerEntries.filter((entry) => entry.truncated).length;
   const nearOutputCapTurns = ledgerEntries.filter((entry) => entry.nearOutputCap).length;
   const unknownFinishReasonTurns = ledgerEntries.filter((entry) => (entry.finishReason || "unknown") === "unknown").length;
+  const directMaxInputBytes = Number(config.maxInputTokens || 200000) * 4;
   const risks = [];
   if (!route.mainDirectM3) risks.push("P0 main route is not direct minimax/MiniMax-M3");
   if (!route.nonMainOpenRouter) risks.push("P1 not all non-main roles are routed through OpenRouter as expected");
   if (openrouterMaxBody > 80000) risks.push(`P0 OpenRouter request body reached ${openrouterMaxBody} bytes; non-main lifecycle traffic can still grow large`);
   if (openrouterMaxMessageBytes > 80000) risks.push(`P0 OpenRouter messages section reached ${openrouterMaxMessageBytes} bytes; history compaction is not protecting lifecycle calls`);
-  if (directMaxBody > Number(config.maxInputTokens || 200000)) risks.push(`P1 direct MiniMax request body reached ${directMaxBody} bytes`);
-  if (directMaxMessageBytes > Number(config.maxInputTokens || 200000)) risks.push(`P1 direct MiniMax messages section reached ${directMaxMessageBytes} bytes`);
+  if (directMaxBody > directMaxInputBytes) risks.push(`P1 direct MiniMax request body reached ${directMaxBody} bytes`);
+  if (directMaxMessageBytes > directMaxInputBytes) risks.push(`P1 direct MiniMax messages section reached ${directMaxMessageBytes} bytes`);
   if (promptCache.enforcePatchedEvents > 0 && cacheWrite === 0) risks.push("P1 prompt-cache patch is active, but MiniMax direct cacheWrite remains 0; savings are unproven");
   if (cacheRead > 0 && cacheWrite === 0) risks.push("P1 cacheRead exists without cacheWrite; run A/B before relying on direct MiniMax cache");
   if (truncatedTurns > 0) risks.push(`P1 response truncation observed in ${truncatedTurns} bridge turn(s); review answers may be incomplete`);
@@ -1583,10 +1715,10 @@ async function askCommand(args) {
   }
   const taskPaths = argValues(args, "--task");
   if (taskPaths.length === 0) throw new Error("--task is required");
-  const tasks = taskPaths.map((taskPath) => ({
-    taskPath: path.resolve(taskPath),
-    text: fs.readFileSync(path.resolve(taskPath), "utf8"),
-  }));
+  const tasks = taskPaths.map((taskPath) => {
+    const { path: realPath, text } = readTrustedText(taskPath, "--task");
+    return { taskPath: realPath, text };
+  });
   const sourceContext = buildAskSourceContext(args, tasks.map((task) => task.taskPath));
   const promptTasks = tasks.map((task, index) => ({
     ...task,
@@ -1739,8 +1871,8 @@ async function mvsSendCommand(args) {
     throw new Error("mvs-send --content requires --allow-inline-content; prefer --task to avoid shell history leaks");
   }
   await verifyMavisSession(port, sessionID, { action: "mvs-send" });
-  const content = taskPath ? fs.readFileSync(path.resolve(taskPath), "utf8") : inline;
   const maxChars = Number(config.mvsMaxSendChars || 4000);
+  const content = taskPath ? readTrustedText(taskPath, "--task", maxChars).text : inline;
   if (content.length > maxChars) {
     throw new Error(`mvs-send content too large: ${content.length} chars > ${maxChars}`);
   }
@@ -1827,14 +1959,9 @@ function requireDuetPositiveInteger(value, label) {
 }
 
 function readRequiredText(filePath, label, maxChars = null) {
-  if (!filePath) throw new Error(`${label} is required`);
-  const resolved = path.resolve(process.cwd(), filePath);
-  if (!fs.existsSync(resolved)) throw new Error(`${label} file not found: ${resolved}`);
-  const text = fs.readFileSync(resolved, "utf8").trim();
-  if (!text) throw new Error(`${label} file is empty: ${resolved}`);
-  if (maxChars !== null && text.length > maxChars) {
-    throw new Error(`${label} file is too large (${text.length} chars); keep duet entries <= ${maxChars} chars`);
-  }
+  const { path: realPath, text: rawText } = readTrustedText(filePath, label, maxChars);
+  const text = rawText.trim();
+  if (!text) throw new Error(`${label} file is empty: ${realPath}`);
   return text;
 }
 
@@ -1859,7 +1986,13 @@ function readDuetHandoffText(filePath) {
 
 function writeTextAtomic(filePath, text) {
   const tempPath = `${filePath}.${process.pid}.tmp`;
-  fs.writeFileSync(tempPath, text, "utf8");
+  const handle = fs.openSync(tempPath, "w");
+  try {
+    fs.writeSync(handle, text, null, "utf8");
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
   fs.renameSync(tempPath, filePath);
 }
 
@@ -1954,7 +2087,21 @@ function resolveDuetOutputPath(outPathArg, raw) {
   if (!isPathInsideRoot(bridgeDir, realParent)) {
     throw new Error(`--out path escapes bridge root: ${resolved}`);
   }
-  return path.join(realParent, path.basename(resolved));
+  const target = path.join(realParent, path.basename(resolved));
+  if (fs.existsSync(target)) {
+    const targetStats = fs.lstatSync(target);
+    if (targetStats.isSymbolicLink()) {
+      throw new Error(`--out must not target a symlink: ${target}`);
+    }
+    const realTarget = realpathOrResolve(target);
+    if (!isPathInsideRoot(bridgeDir, realTarget)) {
+      throw new Error(`--out path escapes bridge root: ${resolved}`);
+    }
+    if (!fs.statSync(realTarget).isFile()) {
+      throw new Error(`--out target is not a regular file: ${target}`);
+    }
+  }
+  return target;
 }
 
 function safeLedgerEvent(event) {
@@ -1984,7 +2131,6 @@ function duetTranscriptExport(args) {
   const outPathArg = argValue(args, "--out", null);
   const journalLines = positiveIntegerArg(args, "--journal-lines", "80");
   const ledgerLines = positiveIntegerArg(args, "--ledger-lines", "50");
-  if (raw && outPathArg) requireSafeRawOutputPath(path.resolve(process.cwd(), outPathArg));
 
   const state = readDuetState();
   const journal = readDuetJournal();
@@ -2009,7 +2155,7 @@ function duetTranscriptExport(args) {
 
   const rendered = format === "json" ? stableStringify(payload) : renderDuetTranscriptMarkdown(payload);
   if (outPathArg) {
-    const outPath = path.resolve(process.cwd(), outPathArg);
+    const outPath = resolveDuetOutputPath(outPathArg, raw);
     fs.writeFileSync(outPath, rendered, "utf8");
     return printJson({
       event: "duet-transcript-export",
@@ -2270,22 +2416,23 @@ function printDuetEvent(event, state, args, extra = {}) {
   });
 }
 
-function lastDuetVerifierSummary(journal) {
-  const pattern = /^## Verify - (codex|minimax) - ([^\r\n]+)\r?\n\r?\nstatus=([^\s]+) exit=([^\s]+) durationMs=([^\s]+) verifier=(.+) sha=([^\s]+)$/gm;
-  let latest = null;
-  let match;
-  while ((match = pattern.exec(journal)) !== null) {
-    latest = {
-      agent: match[1],
-      endedAt: match[2],
-      status: match[3],
-      exit: match[4] === "null" ? null : match[4],
-      durationMs: Number(match[5]),
-      verifier: match[6],
-      sha: match[7],
+function lastDuetVerifierSummary() {
+  const events = readJsonl(ledgerPath, 500);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (!["duet-verify", "duet-loop-verify"].includes(event?.event)) continue;
+    return {
+      agent: event.record?.agent || (event.event === "duet-loop-verify" ? "loop" : null),
+      endedAt: event.endedAt || event.ts || null,
+      status: event.status || null,
+      exit: event.exitCode ?? null,
+      durationMs: event.durationMs ?? null,
+      verifier: event.verifier?.basename || null,
+      sha: event.verifier?.sha256 ? String(event.verifier.sha256).slice(0, 8) : null,
+      source: "ledger",
     };
   }
-  return latest;
+  return null;
 }
 
 function duetNextWarnings(state, requestedAgent) {
@@ -2346,7 +2493,7 @@ function duetNextCommand(args) {
     warning: warnings[0] || null,
     warnings,
     nextActions: duetNextActions(state, requestedAgent, allowedToAct),
-    lastVerifier: lastDuetVerifierSummary(journal),
+    lastVerifier: lastDuetVerifierSummary(),
     state: raw ? state : publicDuetState(state),
     journal: raw ? { ...textSummary(journal), tail: tailLines(journal, 80) } : textSummary(journal),
   });
@@ -2394,7 +2541,7 @@ function buildDuetPacketPayload(agent, raw, textLimit) {
     warnings,
     nextActions: duetNextActions(state, agent, allowedToAct),
     allowedCompletionStatuses: ["running", "done", "human_escalation"],
-    lastVerifier: lastDuetVerifierSummary(journal),
+    lastVerifier: lastDuetVerifierSummary(),
     state: raw ? state : publicDuetState(state),
     goal: packetTextField(state.goal, raw, textLimit),
     lastHandoff: state.lastHandoff ? packetTextField(state.lastHandoff, raw, textLimit) : null,
@@ -2592,7 +2739,7 @@ function assertDuetStepPreconditions(state, agent) {
   if (state.status !== "running") {
     throw new Error(`duet step requires running status; current status is ${state.status}`);
   }
-  if (state.iteration >= state.maxIterations) {
+  if (state.iteration > state.maxIterations) {
     throw new Error(`duet step refused: maxIterations reached (${state.iteration}/${state.maxIterations})`);
   }
   if (state.baton !== agent) {
@@ -2601,11 +2748,7 @@ function assertDuetStepPreconditions(state, agent) {
 }
 
 function parseDuetStepStatus(answer) {
-  const text = String(answer || "");
-  const explicit = text.match(/^\s*status\s*:\s*(running|done|human_escalation)\b/im);
-  if (explicit) return explicit[1].toLowerCase();
-  const bare = text.match(/^\s*(running|done|human_escalation)\b/im);
-  return bare ? bare[1].toLowerCase() : "running";
+  return parseTrustedStatusLine(answer) || "running";
 }
 
 function duetStepHandoffPath(agent, suffix, ts = now()) {
@@ -2839,14 +2982,15 @@ async function runCodexExecTurn(promptText, envelope, outputPath, options = {}) 
     }
     const child = spawn(spawnFile, spawnArgs, {
       cwd: workspace.workspace,
+      env: codexExecEnv(),
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
     const timer = setTimeout(() => {
       settled = true;
       terminateChildProcessTree(child);
-      if (promptPath) fs.rmSync(promptPath, { force: true });
-      if (workspace.cleanup) fs.rmSync(workspace.workspace, { recursive: true, force: true });
+      if (promptPath) safeRmSync(promptPath);
+      if (workspace.cleanup) safeRmSync(workspace.workspace, { recursive: true });
       reject(new Error(`codex exec timed out after ${timeoutSec}s`));
     }, timeoutSec * 1000);
 
@@ -2862,16 +3006,16 @@ async function runCodexExecTurn(promptText, envelope, outputPath, options = {}) 
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (promptPath) fs.rmSync(promptPath, { force: true });
-      if (workspace.cleanup) fs.rmSync(workspace.workspace, { recursive: true, force: true });
+      if (promptPath) safeRmSync(promptPath);
+      if (workspace.cleanup) safeRmSync(workspace.workspace, { recursive: true });
       reject(error);
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (promptPath) fs.rmSync(promptPath, { force: true });
-      if (workspace.cleanup) fs.rmSync(workspace.workspace, { recursive: true, force: true });
+      if (promptPath) safeRmSync(promptPath);
+      if (workspace.cleanup) safeRmSync(workspace.workspace, { recursive: true });
       const events = parseCodexJsonEvents(stdout);
       const usage = lastCodexUsage(events);
       if (code !== 0) {
@@ -2905,6 +3049,9 @@ async function runCodexExecTurn(promptText, envelope, outputPath, options = {}) 
           skipGitRepoCheck: workspace.skipGitRepoCheck,
         },
       });
+    });
+    child.stdin.on("error", () => {
+      // A fast-exiting codex process can close stdin before the prompt is written.
     });
     child.stdin.end(process.platform === "win32" ? "" : promptText);
   });
@@ -3173,7 +3320,7 @@ function missingRequiredDuetAgents(requiredAgents, satisfiedAgents) {
 }
 
 function parseDuetLoopOptions(args) {
-  const parsed = verifierArgs(args);
+  const parsed = assertKnownOptions(args, duetLoopAllowedOptions, "duet loop");
   const options = parsed.options;
   const raw = options.includes("--raw");
   if (options.includes("--force")) throw new Error("duet loop does not support --force");
@@ -3271,11 +3418,13 @@ function duetLoopStepPreview(agent, maxPacketChars, maxTokens, raw, codexMode = 
 }
 
 function duetLoopDryRun(args) {
-  if (!args.includes("--dry-run")) {
-    if (args.includes("--yes")) throw new Error("duet loop --yes requires the live loop path; do not combine it with --dry-run");
+  const parsed = verifierArgs(args);
+  const options = parsed.options;
+  if (!options.includes("--dry-run")) {
+    if (options.includes("--yes")) throw new Error("duet loop --yes requires the live loop path; do not combine it with --dry-run");
     throw new Error("duet loop requires --dry-run or --yes");
   }
-  if (args.includes("--yes")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
+  if (options.includes("--yes")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
 
   const loop = parseDuetLoopOptions(args);
   const { profile, codexMode, raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, requiredAgents, verifier } = loop;
@@ -3287,9 +3436,6 @@ function duetLoopDryRun(args) {
   let nextStep = null;
   if (state.status !== "running") {
     stopReasons.push(`terminal_status:${state.status}`);
-  }
-  if (state.status === "running" && state.iteration > maxRounds) {
-    stopReasons.push(`max_rounds:${state.iteration}/${maxRounds}`);
   }
   if (state.status === "running" && !state.baton) {
     stopReasons.push("missing_baton");
@@ -3334,7 +3480,7 @@ function duetLoopDryRun(args) {
       }
       : null,
     nextStep,
-    lastVerifier: lastDuetVerifierSummary(journal),
+    lastVerifier: lastDuetVerifierSummary(),
     state: raw ? state : publicDuetState(state),
   });
 }
@@ -3360,9 +3506,11 @@ async function runDuetLoopVerifier(loop, raw) {
 }
 
 async function duetLoopLive(args) {
-  if (!args.includes("--yes")) throw new Error("duet loop requires --dry-run or --yes");
-  if (args.includes("--dry-run")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
-  requireSpendingApproval(args, "duet loop");
+  const parsed = verifierArgs(args);
+  const options = parsed.options;
+  if (!options.includes("--yes")) throw new Error("duet loop requires --dry-run or --yes");
+  if (options.includes("--dry-run")) throw new Error("duet loop accepts either --dry-run or --yes, not both");
+  requireSpendingApproval(options, "duet loop");
   const loop = parseDuetLoopOptions(args);
   const { profile, codexMode, raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, requiredAgents } = loop;
   const startedAt = now();
@@ -3565,9 +3713,9 @@ function appendVerifyJournalEntry(agent, result) {
     readDuetJournal();
     const shortHash = result.verifier.sha256.slice(0, 8);
     const note = `## Verify - ${agent} - ${result.endedAt}\n\nstatus=${result.status} exit=${result.exitCode ?? "null"} durationMs=${result.durationMs} verifier=${result.verifier.basename} sha=${shortHash}`;
-    appendDuetJournal(note);
     state.updatedAt = now();
     writeDuetState(state);
+    appendDuetJournal(note);
     return { appended: true, agent, note: note.replace(/\r?\n/g, " ") };
   });
 }
@@ -3603,6 +3751,7 @@ async function duetVerifyCommand(args) {
   if (record) {
     result.record = appendVerifyJournalEntry(agent, result);
   }
+  appendJsonl(ledgerPath, result);
   printJson(result);
 }
 
@@ -3644,16 +3793,16 @@ function initializeDuetState(args) {
     updatedAt: ts,
   };
   writeDuetState(state);
-  fs.writeFileSync(
+  writeTextAtomic(
     duetJournalPath,
-    `# Duet Journal\n\n## Goal\n\n${goal}\n\n## Current State\n\nBaton: ${baton}\nStatus: running\n\n## Decisions\n\n## Done\n\n## Open Questions\n\n## Last Handoff\n`,
-    "utf8",
+    `# Duet Journal\n\n## Goal\n\n${renderDuetUserText(goal)}\n\n## Current State\n\nBaton: ${baton}\nStatus: running\n\n## Decisions\n\n## Done\n\n## Open Questions\n\n## Last Handoff\n`,
   );
   appendJsonl(ledgerPath, { event: "duet-init", baton, maxIterations });
   return state;
 }
 
 function duetInitCommand(args) {
+  assertKnownOptions(args, duetInitAllowedOptions, "duet init");
   const state = initializeDuetState(args);
   printDuetEvent("duet-init", state, args);
 }
@@ -3690,6 +3839,7 @@ function duetStartCommands(loop) {
 }
 
 function duetStartCommand(args) {
+  assertKnownOptions(args, duetStartAllowedOptions, "duet start");
   const state = initializeDuetState(args);
   const raw = args.includes("--raw");
   const loop = duetStartLoopOptions(args);
@@ -3751,7 +3901,7 @@ function duetPassCommand(args, options = {}) {
   }
 
   const ts = now();
-  appendDuetJournal(`## Turn ${state.iteration} - ${from}${baton ? ` -> ${baton}` : ""} - ${ts}\n\nStatus: ${nextStatus}\n\n${handoff}`);
+  const mutationId = `duet-pass-${safeFileTimestamp(ts)}-${process.pid}`;
   const nextState = {
     ...state,
     baton,
@@ -3761,8 +3911,10 @@ function duetPassCommand(args, options = {}) {
     humanEscalation,
     updatedAt: ts,
   };
+  appendJsonl(ledgerPath, { event: "duet-pass-intent", id: mutationId, from, to: baton, status: nextStatus, iteration: nextState.iteration });
+  appendDuetJournal(`## Turn ${state.iteration} - ${from}${baton ? ` -> ${baton}` : ""} - ${ts}\n\nStatus: ${nextStatus}\n\n${renderDuetUserText(handoff)}`);
   writeDuetState(nextState);
-  appendJsonl(ledgerPath, { event: "duet-pass", from, to: baton, status: nextStatus, iteration: nextState.iteration });
+  appendJsonl(ledgerPath, { event: "duet-pass", id: mutationId, from, to: baton, status: nextStatus, iteration: nextState.iteration });
   if (options.print !== false) printDuetEvent("duet-pass", nextState, args);
   return { event: "duet-pass", state: nextState };
 }
@@ -3772,10 +3924,12 @@ function duetNoteCommand(args) {
   const agent = requireDuetAgent(argValue(args, "--agent"), "--agent");
   const note = readRequiredText(argValue(args, "--note"), "--note", duetMaxEntryChars);
   const ts = now();
-  appendDuetJournal(`## Note - ${agent} - ${ts}\n\n${note}`);
+  const mutationId = `duet-note-${safeFileTimestamp(ts)}-${process.pid}`;
   state.updatedAt = ts;
+  appendJsonl(ledgerPath, { event: "duet-note-intent", id: mutationId, agent, iteration: state.iteration });
+  appendDuetJournal(`## Note - ${agent} - ${ts}\n\n${renderDuetUserText(note)}`);
   writeDuetState(state);
-  appendJsonl(ledgerPath, { event: "duet-note", agent, iteration: state.iteration });
+  appendJsonl(ledgerPath, { event: "duet-note", id: mutationId, agent, iteration: state.iteration });
   printDuetEvent("duet-note", state, args);
 }
 
@@ -3788,8 +3942,8 @@ async function duetCommand(args) {
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
   node .\\bridge.mjs duet packet export --agent codex|minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
-  node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--codex-mode isolated|exec] [--raw] [--max-packet-chars <n>] [--port <port>]
-  node .\\bridge.mjs duet loop --dry-run [--profile smoke] [--codex-mode isolated|exec] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
+  node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--codex-mode isolated|exec] [--raw] [--max-packet-chars <n>] [--port <port> for minimax]
+  node .\\bridge.mjs duet loop --dry-run|--yes [--profile smoke] [--codex-mode isolated|exec] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
   node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
@@ -3803,11 +3957,14 @@ async function duetCommand(args) {
   if (subcommand === "next") return duetNextCommand(rest);
   if (subcommand === "packet") return duetPacketExport(rest);
   if (subcommand === "step") {
-    if (rest.includes("--dry-run")) return duetStepDryRun(rest);
+    assertKnownOptions(rest, duetStepAllowedOptions, "duet step");
+    const options = verifierArgs(rest).options;
+    if (options.includes("--dry-run")) return duetStepDryRun(rest);
     return await withDuetLockAsync(() => duetStepLive(rest));
   }
   if (subcommand === "loop") {
-    if (rest.includes("--dry-run")) return duetLoopDryRun(rest);
+    const options = verifierArgs(rest).options;
+    if (options.includes("--dry-run")) return duetLoopDryRun(rest);
     return await withDuetLockAsync(() => duetLoopLive(rest));
   }
   if (subcommand === "report") return duetReportCommand(rest);
@@ -3817,8 +3974,14 @@ async function duetCommand(args) {
     throw new Error("unknown duet transcript command; expected `duet transcript export`");
   }
   if (subcommand === "verify") return await duetVerifyCommand(rest);
-  if (subcommand === "pass") return withDuetLock(() => duetPassCommand(rest));
-  if (subcommand === "note") return withDuetLock(() => duetNoteCommand(rest));
+  if (subcommand === "pass") {
+    assertKnownOptions(rest, duetPassAllowedOptions, "duet pass");
+    return withDuetLock(() => duetPassCommand(rest));
+  }
+  if (subcommand === "note") {
+    assertKnownOptions(rest, duetNoteAllowedOptions, "duet note");
+    return withDuetLock(() => duetNoteCommand(rest));
+  }
   throw new Error(`unknown duet command: ${subcommand}`);
 }
 

@@ -23,11 +23,15 @@ OpenCode or Mavis session commands.
 Run:
 
 ```powershell
-node --check .\bridge.mjs
+npm run test:release
 node .\bridge.mjs status
 node .\bridge.mjs canary-estimate
 node .\bridge.mjs optimize-check --skip-canary
 ```
+
+`npm run test:release` runs syntax checks, the full offline test suite, and
+`git diff --check`. GitHub Actions runs the same release check on pushes and
+pull requests.
 
 If your change sends prompts or touches live session commands, document the live
 test you ran and the session safety assumptions.

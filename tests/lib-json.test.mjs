@@ -44,10 +44,19 @@ test("jsonl helper reads trailing valid lines and ignores invalid lines", (t) =>
     "{\"b\":2}",
     "{\"c\":3}",
   ].join("\n"), "utf8");
+  const warnings = [];
+  const originalEmitWarning = process.emitWarning;
+  process.emitWarning = (warning, options) => {
+    warnings.push({ warning, code: options?.code || null });
+  };
+  t.after(() => {
+    process.emitWarning = originalEmitWarning;
+  });
 
   assert.deepEqual(readJsonl(path.join(dir, "missing.jsonl")), []);
   assert.deepEqual(readJsonl(filePath, 2), [{ b: 2 }, { c: 3 }]);
   assert.deepEqual(readJsonl(filePath, 10), [{ a: 1 }, { b: 2 }, { c: 3 }]);
+  assert.equal(warnings.some((warning) => warning.code === "MAVIS_BRIDGE_JSONL_PARSE"), true);
 });
 
 test("escapeNonAscii escapes only non-ascii characters", () => {

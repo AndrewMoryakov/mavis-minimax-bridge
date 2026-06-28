@@ -51,9 +51,9 @@ codex-cli 0.142.2
 Executable locations:
 
 ```text
-C:\Users\hopt\AppData\Roaming\npm\codex
-C:\Users\hopt\AppData\Roaming\npm\codex.bat
-C:\Users\hopt\AppData\Roaming\npm\codex.cmd
+%APPDATA%\npm\codex
+%APPDATA%\npm\codex.bat
+%APPDATA%\npm\codex.cmd
 ```
 
 `codex doctor` reported:

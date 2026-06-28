@@ -37,6 +37,11 @@ node .\bridge.mjs doctor
 node .\bridge.mjs status
 ```
 
+Install from a GitHub clone. `npm install -g`, `npx`, and npm-registry publish
+are intentionally not supported yet because the bridge keeps mutable runtime
+files next to the checked-out project. `package.json` is marked private to
+avoid accidental npm publication.
+
 This creates the local runtime skeleton:
 
 ```text
@@ -316,7 +321,9 @@ Codex supports `--codex-mode exec|isolated`: `exec` uses the bridge workspace
 with `workspace-write`, while `isolated` runs from an empty scratch workspace
 with `read-only` sandboxing and `--skip-git-repo-check`. Isolated mode reduces
 workspace exposure, but it is not a hard security boundary and still relies on
-Codex following the packet-only instruction.
+Codex following the packet-only instruction. Exec mode can modify bridge
+repository files and local runtime files; use isolated mode for safer
+review-only relay turns.
 Both commands store the answer as a pending local handoff, apply it through the
 same hardened `duet pass` validation, and redact the answer in stdout unless
 `--raw` is passed. If apply fails, the baton is not advanced and the pending
