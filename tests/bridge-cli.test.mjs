@@ -445,6 +445,58 @@ test("duet step codex dry-run validates baton and spends no tokens", (t) => {
   fails(runBridge(dir, ["duet", "step", "--agent", "codex", "--dry-run", "--codex-mode"]), /--codex-mode requires isolated or exec/);
 });
 
+test("duet step claude dry-run is manual-only and respects strict availability", (t) => {
+  const dir = sandbox(t);
+  const missingCli = path.join(dir, "missing", "claude.cmd");
+  writeFile(dir, "goal.md", "Claude manual dry-run goal");
+  writeFile(dir, "handoff.md", "Manual handoff to Claude");
+
+  ok(runBridge(dir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(missingCli)]));
+  ok(runBridge(dir, ["duet", "start", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "3"]));
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "claude", "--handoff", "handoff.md"]));
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.baton, "claude");
+
+  const packet = ok(runBridge(dir, ["duet", "packet", "export", "--agent", "claude"]));
+  assert.equal(packet.agent, "claude");
+
+  const dryRun = ok(runBridge(dir, ["duet", "step", "--agent", "claude", "--dry-run"]));
+  assert.equal(dryRun.event, "duet-step-dry-run");
+  assert.equal(dryRun.agent, "claude");
+  assert.equal(dryRun.mode, "claude-dry-run");
+  assert.equal(dryRun.tokenSpending, false);
+  assert.equal(dryRun.wouldCallModel, false);
+  assert.equal(dryRun.wouldCallClaude, true);
+  assert.equal(dryRun.route.provider, "anthropic");
+  assert.equal(dryRun.route.claudeCli.spawnable, false);
+  assert.equal(dryRun.route.toolRisk, "no tools approved; live Claude step is Stage 4");
+  assert.ok(dryRun.warnings.includes("claude.cli.missing"));
+
+  fails(
+    runBridge(dir, ["duet", "step", "--agent", "claude", "--yes"]),
+    /Stage 4/,
+  );
+  fails(
+    runBridge(dir, ["duet", "loop", "--dry-run"]),
+    /state\.baton must be one of: codex, minimax/,
+  );
+
+  ok(runBridge(dir, ["config", "set", "--key", "claudeRequireAvailable", "--value", "true"]));
+  fails(
+    runBridge(dir, ["duet", "step", "--agent", "claude", "--dry-run"]),
+    /claudeRequireAvailable=true/,
+  );
+
+  const direct = sandbox(t);
+  writeFile(direct, "goal.md", "Direct Claude baton goal");
+  ok(runBridge(direct, ["duet", "start", "--goal", "goal.md", "--baton", "claude"]));
+  fails(
+    runBridge(direct, ["duet", "pass", "--from", "claude", "--handoff", "goal.md"]),
+    /unknown loop agent 'claude'/,
+  );
+});
+
 test("duet step minimax yes applies a fake review-only handoff without leaking by default", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_STEP_LIVE_123";

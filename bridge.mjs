@@ -16,7 +16,7 @@ import { makeSourceContext, readSourceSnippet } from "./lib/source-context.mjs";
 import { makeVerifier, verifierArgs, verifierEnv } from "./lib/verifier.mjs";
 import { fetchJson, fetchJsonWithTimeout } from "./lib/http-json.mjs";
 import { makeMvsClient } from "./lib/mvs-client.mjs";
-import { resolveClaudeCli } from "./lib/claude-code.mjs";
+import { buildClaudeArgs, resolveClaudeCli } from "./lib/claude-code.mjs";
 import {
   codexIsolationWarning,
   codexPromptPathForOutput,
@@ -185,18 +185,19 @@ function fullUsage() {
   node .\\bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-send --task <file> --yes [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-send --content <text> --allow-inline-content --yes [--session <mvs-id>] [--daemon-port <port>]
-  node .\\bridge.mjs duet start --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>]
-  node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
+  node .\\bridge.mjs duet start --goal <file> [--baton codex|minimax|claude] [--max-iterations <n>] [--force] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>]
+  node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax|claude] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
-  node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
-  node .\\bridge.mjs duet packet export --agent codex|minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
+  node .\\bridge.mjs duet next [--agent codex|minimax|claude] [--raw]
+  node .\\bridge.mjs duet packet export --agent codex|minimax|claude [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--codex-mode isolated|exec] [--raw] [--max-packet-chars <n>] [--port <port> for minimax]
+  node .\\bridge.mjs duet step --agent claude --dry-run [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet loop --dry-run|--yes [--profile smoke] [--codex-mode isolated|exec] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
   node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
-  node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
-  node .\\bridge.mjs duet note --agent codex|minimax --note <file> [--raw]
+  node .\\bridge.mjs duet pass --from codex|minimax|claude [--to codex|minimax|claude] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
+  node .\\bridge.mjs duet note --agent codex|minimax|claude --note <file> [--raw]
   node .\\bridge.mjs tail [--lines <n>] [--raw]
   node .\\bridge.mjs stop`);
 }
@@ -2020,11 +2021,19 @@ function tailCommand(args) {
   }
 }
 
-const duetAgents = new Set(["codex", "minimax"]);
+const duetManualAgents = new Set(["codex", "minimax", "claude"]);
+const duetLoopAgents = new Set(["codex", "minimax"]);
 const duetStatuses = new Set(["running", "done", "human_escalation"]);
 
 function requireDuetAgent(value, label) {
-  if (!duetAgents.has(value)) {
+  if (!duetManualAgents.has(value)) {
+    throw new Error(`${label} must be one of: codex, minimax, claude`);
+  }
+  return value;
+}
+
+function requireDuetLoopAgent(value, label) {
+  if (!duetLoopAgents.has(value)) {
     throw new Error(`${label} must be one of: codex, minimax`);
   }
   return value;
@@ -2094,7 +2103,7 @@ function validateDuetState(state) {
   if (typeof state.goal !== "string" || !state.goal.trim()) fail("goal must be a non-empty string");
   if (!duetStatuses.has(state.status)) fail("status must be one of: running, done, human_escalation");
   if (state.status === "running") {
-    if (!duetAgents.has(state.baton)) fail("baton must be one of: codex, minimax");
+    if (!duetManualAgents.has(state.baton)) fail("baton must be one of: codex, minimax, claude");
   } else if (state.baton !== null) {
     fail("baton must be null unless status is running");
   }
@@ -2544,14 +2553,15 @@ function duetNextActions(state, requestedAgent, allowedToAct) {
   if (state.status !== "running") {
     return { inspect, act: [], recover: [] };
   }
+  const implicitNext = (agent) => agent === "claude" ? "codex|minimax" : nextDuetAgent(agent);
   const recover = allowedToAct
     ? []
     : [
-      `node .\\bridge.mjs duet pass --from ${state.baton} --to ${requestedAgent || nextDuetAgent(state.baton)} --handoff <file>`,
+      `node .\\bridge.mjs duet pass --from ${state.baton} --to ${requestedAgent || implicitNext(state.baton)} --handoff <file>`,
     ];
   const act = allowedToAct
     ? [
-      `node .\\bridge.mjs duet pass --from ${requestedAgent} --to ${nextDuetAgent(requestedAgent)} --handoff <file>`,
+      `node .\\bridge.mjs duet pass --from ${requestedAgent} --to ${implicitNext(requestedAgent)} --handoff <file>`,
       `node .\\bridge.mjs duet pass --from ${requestedAgent} --status done --handoff <file>`,
       `node .\\bridge.mjs duet pass --from ${requestedAgent} --status human_escalation --handoff <file>`,
     ]
@@ -2812,6 +2822,18 @@ function duetStepPrompt(agent, packetText, options = {}) {
       "Start the handoff with exactly one status line: `Status: running`, `Status: done`, or `Status: human_escalation`.",
       "After the status line, include concise reasoning, changed files, verifier results, next steps, and any files or commands the next agent should inspect.",
       "For `Status: running`, the bridge will pass the baton back to MiniMax.",
+      "",
+      "## Duet Packet",
+      "",
+      packetText,
+    ].join("\n");
+  }
+  if (agent === "claude") {
+    return [
+      "You are Claude Code participating in a manual, local Duet Relay dry-run.",
+      "No tools are approved by this bridge step. Do not assume live execution.",
+      "Review the packet and prepare a compact handoff that could be used in Stage 4.",
+      "When live support exists, choose an explicit next recipient: codex or minimax.",
       "",
       "## Duet Packet",
       "",
@@ -3143,7 +3165,7 @@ async function runCodexExecTurn(promptText, envelope, outputPath, options = {}) 
   });
 }
 
-function duetStepDryRun(args) {
+async function duetStepDryRun(args) {
   const raw = args.includes("--raw");
   if (!args.includes("--dry-run")) {
     if (args.includes("--yes")) throw new Error("duet step --yes requires the live step path; do not combine it with --dry-run");
@@ -3166,11 +3188,24 @@ function duetStepDryRun(args) {
   const promptForEstimate = agent === "minimax" ? addOptimizationContext(promptText, { role: "main" }) : promptText;
   const estimatedInputTokens = estimateInputTokensForText(promptForEstimate);
   const maxInputTokens = Number(config.maxInputTokens || 200000);
-  const route = agent === "minimax" ? requiredModel() : "codex-cli";
+  const route = agent === "minimax" ? requiredModel() : agent === "codex" ? "codex-cli" : (config.claudeModel || "claude-cli");
   const codexWorkspace = agent === "codex" ? codexWorkspaceForMode(codexMode) : null;
+  const claude = agent === "claude"
+    ? publicClaudeDiagnostic(await resolveClaudeCli({
+      configuredCli: config.claudeCli,
+      timeoutMs: config.claudeCliSearchTimeoutMs,
+    }))
+    : null;
   const dryRunWarnings = state.lastHandoff ? [] : ["missing_last_handoff"];
   const isolationWarning = codexIsolationWarning(codexMode);
   if (isolationWarning) dryRunWarnings.push(isolationWarning);
+  if (agent === "claude" && !claude.spawnable) {
+    dryRunWarnings.push("claude.cli.missing");
+    if (claude.warning) dryRunWarnings.push(claude.warning);
+    if (config.claudeRequireAvailable) {
+      throw new Error(`claude dry-run requires available Claude CLI because claudeRequireAvailable=true: ${claude.warning || claude.kind}`);
+    }
+  }
   const packetDetails = raw
     ? {
       maxChars: maxPacketChars,
@@ -3204,19 +3239,27 @@ function duetStepDryRun(args) {
   printJson({
     event: "duet-step-dry-run",
     agent,
-    mode: agent === "minimax" ? "review-only" : "exec",
+    mode: agent === "minimax" ? "review-only" : agent === "codex" ? "exec" : "claude-dry-run",
     codexMode,
     tokenSpending: false,
-    wouldCallModel: true,
+    wouldCallModel: agent !== "claude",
+    wouldCallClaude: agent === "claude",
     liveCallAllowed: estimatedInputTokens <= maxInputTokens,
     raw,
     warning: dryRunWarnings[0] || null,
     warnings: dryRunWarnings,
     route: {
-      provider: agent === "minimax" ? providerFromModel(route) : "openai",
+      provider: agent === "minimax" ? providerFromModel(route) : agent === "codex" ? "openai" : "anthropic",
       model: route,
       outputCapTokens: agent === "minimax" ? roleOutputCap("main") : null,
       cli: agent === "codex" ? config.codexCli : undefined,
+      claudeCli: agent === "claude" ? claude : undefined,
+      argv: agent === "claude" ? buildClaudeArgs(config) : undefined,
+      maxTurns: agent === "claude" ? config.claudeMaxTurns : undefined,
+      maxBudgetUsd: agent === "claude" ? config.claudeMaxBudgetUsd : undefined,
+      permissionMode: agent === "claude" ? config.claudePermissionMode : undefined,
+      runnerTimeoutMs: agent === "claude" ? config.claudeRunnerTimeoutMs : undefined,
+      toolRisk: agent === "claude" ? "no tools approved; live Claude step is Stage 4" : undefined,
       sandbox: codexWorkspace?.sandbox,
       workspaceMode: agent === "codex" ? codexMode : undefined,
       skipGitRepoCheck: codexWorkspace?.skipGitRepoCheck,
@@ -3246,6 +3289,9 @@ async function runDuetStepLive(args, options = {}) {
   if (args.includes("--force")) throw new Error("duet step does not support --force");
   requireSpendingApproval(args, "duet step");
   const agent = requireDuetAgent(argValue(args, "--agent"), "--agent");
+  if (agent === "claude") {
+    throw new Error("duet step --agent claude --yes is Stage 4; use --dry-run in Stage 3");
+  }
   const codexMode = agent === "codex" ? codexModeArg(args, "exec") : null;
   const stateBefore = readDuetState();
   const stateBeforeText = fs.readFileSync(duetStatePath, "utf8");
@@ -3392,7 +3438,7 @@ function parseRequiredDuetAgents(options) {
     for (const rawAgent of String(value).split(",")) {
       const agent = rawAgent.trim().toLowerCase();
       if (!agent) continue;
-      requireDuetAgent(agent, "--require-agents");
+      requireDuetLoopAgent(agent, "--require-agents");
       if (seen.has(agent)) throw new Error("--require-agents must not repeat agents");
       seen.add(agent);
       agents.push(agent);
@@ -3529,7 +3575,7 @@ function duetLoopDryRun(args) {
   if (!state.lastHandoff) warnings.push("missing_last_handoff");
 
   if (stopReasons.length === 0) {
-    const agent = requireDuetAgent(state.baton, "state.baton");
+    const agent = requireDuetLoopAgent(state.baton, "state.baton");
     nextStep = duetLoopStepPreview(agent, maxPacketChars, maxTokens, raw, codexMode);
     if (nextStep.estimatedInputTokens > maxTokens) stopReasons.push(`token_budget:${nextStep.estimatedInputTokens}/${maxTokens}`);
     if (agent === "codex" && maxCodexSteps < 1) stopReasons.push("max_codex_steps:0");
@@ -3624,7 +3670,7 @@ async function duetLoopLive(args) {
       stopReasons.push("missing_baton");
       break;
     }
-    const agent = requireDuetAgent(state.baton, "state.baton");
+    const agent = requireDuetLoopAgent(state.baton, "state.baton");
     if (agent === "codex" && codexSteps >= maxCodexSteps) {
       stopReasons.push(`max_codex_steps:${codexSteps}/${maxCodexSteps}`);
       break;
@@ -3842,7 +3888,9 @@ async function duetVerifyCommand(args) {
 }
 
 function nextDuetAgent(agent) {
-  return agent === "codex" ? "minimax" : "codex";
+  if (agent === "codex") return "minimax";
+  if (agent === "minimax") return "codex";
+  throw new Error(`unknown loop agent '${agent}'`);
 }
 
 function positiveIntegerArg(args, name, fallback) {
@@ -4033,8 +4081,8 @@ async function duetCommand(args) {
   node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
-  node .\\bridge.mjs duet pass --from codex|minimax [--to codex|minimax] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
-  node .\\bridge.mjs duet note --agent codex|minimax --note <file> [--raw]`);
+  node .\\bridge.mjs duet pass --from codex|minimax|claude [--to codex|minimax|claude] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
+  node .\\bridge.mjs duet note --agent codex|minimax|claude --note <file> [--raw]`);
     return;
   }
   if (subcommand === "start") return withDuetLock(() => duetStartCommand(rest));
@@ -4045,7 +4093,7 @@ async function duetCommand(args) {
   if (subcommand === "step") {
     assertKnownOptions(rest, duetStepAllowedOptions, "duet step");
     const options = verifierArgs(rest).options;
-    if (options.includes("--dry-run")) return duetStepDryRun(rest);
+    if (options.includes("--dry-run")) return await duetStepDryRun(rest);
     return await withDuetLockAsync(() => duetStepLive(rest));
   }
   if (subcommand === "loop") {
