@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const scriptRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(scriptRepoRoot, "prompts", "bridge.md");
 const args = new Map();
-const allowedArgs = new Set(["codex-home", "dry-run", "help", "h"]);
+const allowedArgs = new Set(["codex-home", "repo-root", "dry-run", "help", "h"]);
 
 for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
@@ -30,7 +30,7 @@ if (args.has("help") || args.has("h")) {
   console.log(`Install the bridge custom prompt into Codex
 
 Usage:
-  node .\\scripts\\install-codex-slash.mjs [--codex-home <path>] [--dry-run]
+  node .\\scripts\\install-codex-slash.mjs [--codex-home <path>] [--repo-root <path>] [--dry-run]
 
 Default target:
   %USERPROFILE%\\.codex\\prompts\\bridge.md
@@ -44,13 +44,14 @@ After install, restart Codex CLI and use:
 const codexHome = path.resolve(args.get("codex-home") ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"));
 const target = path.join(codexHome, "prompts", "bridge.md");
 const dryRun = args.has("dry-run");
+const repoRoot = path.resolve(args.get("repo-root") ?? scriptRepoRoot);
 
 if (!fs.existsSync(source)) {
   console.error(`source missing: ${source}`);
   process.exit(1);
 }
 
-const sourceText = fs.readFileSync(source, "utf8");
+const sourceText = fs.readFileSync(source, "utf8").replaceAll("__BRIDGE_REPO_ROOT__", repoRoot);
 const current = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : null;
 
 if (current === sourceText) {

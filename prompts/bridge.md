@@ -5,6 +5,12 @@ argument-hint: [guide|doctor|status|audit|state|mode|session|tokens|ask|duet] [A
 
 Use the `mavis-minimax-bridge` skill and operate the local bridge repository.
 
+Repository:
+
+```powershell
+__BRIDGE_REPO_ROOT__
+```
+
 User request or command arguments:
 
 ```text
@@ -13,8 +19,10 @@ $ARGUMENTS
 
 Rules:
 
-- If no arguments are provided, run `node .\bridge.mjs guide` and summarize the
-  four simplest user paths.
+- Always run bridge commands from the repository root. If needed, first run
+  `Set-Location -LiteralPath "__BRIDGE_REPO_ROOT__"`.
+- If no arguments are provided, run `node .\bridge.mjs guide` from the
+  repository root and summarize the four simplest user paths.
 - First inspect bridge state with local-only commands when the request is vague;
   use `doctor` when the active shell may be in the wrong project.
 - If the user describes a task and says `let's go`, treat it as a request to

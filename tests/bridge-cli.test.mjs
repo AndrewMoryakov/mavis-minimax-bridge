@@ -1865,3 +1865,24 @@ test("install scripts reject unknown options before writing", (t) => {
   assert.equal(fs.existsSync(path.join(dir, "skills")), false);
   assert.equal(fs.existsSync(path.join(dir, "prompts")), false);
 });
+
+test("codex slash installer embeds the bridge repository root", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-codex-home-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const result = spawnSync(process.execPath, [
+    path.join(repoRoot, "scripts", "install-codex-slash.mjs"),
+    "--codex-home",
+    dir,
+    "--repo-root",
+    repoRoot,
+  ], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  const installed = fs.readFileSync(path.join(dir, "prompts", "bridge.md"), "utf8");
+  assert.match(installed, new RegExp(repoRoot.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")));
+  assert.doesNotMatch(installed, /__BRIDGE_REPO_ROOT__/);
+});
