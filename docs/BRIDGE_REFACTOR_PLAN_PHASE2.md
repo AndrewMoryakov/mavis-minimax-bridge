@@ -245,10 +245,42 @@ stays in `bridge.mjs`. The leaf-extraction work of Phase 2 is exhausted.
 
 ## Backlog (not Phase-2 gates)
 
-Pre-existing, untested-before-and-after robustness gaps surfaced by the review —
-track, do not block: verifier `spawn_error` path (~4041), stream-cap behavior
-(~4021–4022), the "not a regular file" check (~3920). They are not Phase-2
-regressions.
+Test-net hardening, deferred from the extractions and the two reviews. None are
+regressions; the moved code is behavior-equivalent. Tracked here so they are not
+mistaken for "covered". Referenced by function, not line number (lines drift).
+
+Consumer-layer coverage (advisor-flagged):
+
+- The four mvs command handlers (`mvsStatusCommand`, `mvsPeersCommand`,
+  `mvsMessagesCommand`, `mvsSendCommand`) and `sendPrompt` have no offline
+  tests — wiring was confirmed only by verbatim move + an end-to-end
+  `mvs-status` smoke (fetch-failed, not a ReferenceError).
+
+Untested branches in extracted modules:
+
+- `lib/mvs-client.mjs`: `mavisCli` homedir fallback (config absent),
+  `verifyMavisSession` `allowMismatch` + internal-denied paths, `readUsage`
+  `runJson`-throws → catch.
+- `lib/verifier.mjs`: `resolveVerifierPath` required-flag / not-found /
+  not-a-regular-file / `maxBytes` size-cap branches.
+- `lib/source-context.mjs`: `shouldSkipSourceContextPath` deny branches not
+  directly unit-tested (`taskPathSet`, the duet tmp regex, the `examples/*`
+  fixtures, the `../`/absolute/empty guard); `includedSourceFiles`
+  `maxFiles`/`maxDirs` limit branches.
+- Golden `ask --include` test: the ordering sub-claim is unexercised (single
+  include dir, so `files.sort` is a no-op there). Add a 2+-file out-of-order
+  fixture so removing the sort fails.
+
+Pre-existing robustness gaps (untested before and after the move):
+
+- verifier `spawn_error` path, stream-cap behavior, and the "not a regular
+  file" check in `runVerifierProcess`/`readSourceSnippet`.
+
+Repo hygiene (separate from the refactor):
+
+- ~30 `*.local.*` duet-session artifacts sit in the repo root. They are already
+  git-ignored (`.gitignore` has `*.local.*`) and never shipped, so this is only
+  an optional local working-tree declutter, not a repo or package concern.
 
 ## Sequence
 
