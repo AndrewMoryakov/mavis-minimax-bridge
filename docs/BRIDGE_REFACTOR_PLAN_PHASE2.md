@@ -1,6 +1,9 @@
 # Bridge Refactor Plan — Phase 2
 
-Status: proposed (revised after a multi-agent safety review). Precondition done.
+Status: complete. Patches 6–7, the shared-text and HTTP-JSON transport
+extractions, and the review-driven coverage fixes all landed. Remaining
+candidates (mvs-client Tier-2, codex-runner) are judgment-call clusters left
+for a future focused pass; everything else stays in `bridge.mjs` by design.
 
 Continues `BRIDGE_REFACTOR_PLAN.md`, which is implemented through Patch 5 plus a
 follow-up `path-security` extraction. Phase 1 moved leaf helpers into `lib/`
