@@ -1454,6 +1454,60 @@ test("ask dry-run can include explicit source from a clean worktree", (t) => {
   assert.match(dryRun.sourceContext.text, /EXPLICIT_INCLUDE_BETA/);
 });
 
+test("ask include source context block matches the expected golden format", (t) => {
+  const dir = sandbox(t);
+  git(dir, ["init"]);
+  git(dir, ["config", "user.email", "test@example.invalid"]);
+  git(dir, ["config", "user.name", "Bridge Test"]);
+  fs.mkdirSync(path.join(dir, "src"));
+  writeFile(dir, "task.md", "Review explicit includes.");
+  writeFile(dir, "src/alpha.txt", "EXPLICIT_INCLUDE_ALPHA\n");
+  writeFile(dir, "src/beta.txt", "EXPLICIT_INCLUDE_BETA\n");
+  git(dir, ["add", ...bridgeRuntimeGitPaths(dir), "task.md", "src/alpha.txt", "src/beta.txt"]);
+  git(dir, ["commit", "-m", "seed"]);
+
+  const dryRun = ok(runBridge(dir, [
+    "ask",
+    "--dry-run",
+    "--mode",
+    "review-only",
+    "--task",
+    "task.md",
+    "--include",
+    "src",
+    "--raw",
+  ]));
+
+  // Golden gate: a clean worktree with explicit includes is deterministic
+  // (untrackedCount: 0), so pin the whole block to catch any wrapper or
+  // ordering regression in the moved source-context snippet/sort logic.
+  assert.equal(dryRun.sourceContext.untrackedCount, 0);
+  const expected = [
+    '<source_context mode="auto" chars="24000" truncated="false">',
+    "MiniMax source visibility context.",
+    "The reviewer may not have direct access to this local worktree; use this bounded context as the source of truth for uncommitted changes.",
+    "",
+    "",
+    "## explicit include text file snippets",
+    "",
+    "### src/alpha.txt",
+    "",
+    "```",
+    "EXPLICIT_INCLUDE_ALPHA",
+    "",
+    "```",
+    "",
+    "### src/beta.txt",
+    "",
+    "```",
+    "EXPLICIT_INCLUDE_BETA",
+    "",
+    "```",
+    "</source_context>",
+  ].join("\n");
+  assert.equal(dryRun.sourceContext.text, expected);
+});
+
 test("ask include excludes task files, runtime files, and binary files", (t) => {
   const dir = sandbox(t);
   fs.mkdirSync(path.join(dir, "src"));
