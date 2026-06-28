@@ -68,48 +68,68 @@ orchestrate never block each other), atomic-write, and the budget machinery.
 
 ## 2. Data flow and state
 
-**Start (also through the WAL):** `orchestrate start --task <file> --target <dir>`
-runs the same write-ahead sequence as every step, so the ledger alone fully
-describes the task from `seq 0`:
-`init-intent (task, participants, budgets, target) → write journal header →
-project initial state → init-applied`.
-Each participant is given a session: MiniMax a native opencode session
-(`createSession` → `mvs_…`); codex a logical session id for bridge-managed memory.
-The session ids are part of the init record, so `resume` reconstructs the whole
-task — task text, participants, budgets, target, sessions — from the ledger with
-no reliance on `orch-state.json` having survived.
+**Start (also through the WAL).** `orchestrate start --task <file> --target <dir>`
+runs a write-ahead init sequence, ordered so each record holds only what is known
+at that point (session ids exist only *after* creation):
+
+```
+init-intent (task, target, budgets, planned participants — NO session ids yet)
+  → create sessions (MiniMax: createSession → mvs_…; codex: a logical session id)
+  → session-create-result (participants + their session ids)
+  → write journal header → project initial state → init-applied
+```
+
+So `resume` reconstructs the whole task — task, target, budgets, participants,
+session ids — from the ledger alone, with no reliance on `orch-state.json` having
+survived. A crash *after* `init-intent` but *before* `session-create-result` means
+no usable sessions were recorded → resume re-runs init cleanly. A crash after
+`session-create-result` but before `init-applied` may leave orphan provider
+sessions; because their ids did reach the ledger, resume can reuse or explicitly
+abandon them rather than leaking silently.
 
 **Loop (the orchestrator goes first each cycle — it is the router):**
 
 ```
-1. Bridge → orchestrator: the new result-summary of the prior step
+1. Append DECISION-INTENT (about to ask the orchestrator).
+2. Bridge → orchestrator: the new result-summary of the prior step
    (the orchestrator remembers the rest — persistent session).
    Step 0: just the task (the ledger holds only the init records, no step results yet).
-2. Orchestrator (LLM) → strict decision: {action: run|done|escalate, worker, subtask, note}
-3a. run → append a ledger INTENT record (about to run worker W with subtask S);
+   Orchestrator (LLM) → strict decision: {action: run|done|escalate, worker, subtask, note}.
+   Append DECISION-RESULT (the validated decision + the call's token usage).
+3a. action=run → append WORKER-INTENT (run worker W with subtask S);
     worker-runner gives the worker {subtask + goal-as-background};
     the worker runs in its OWN persistent session;
-    bridge captures raw output, stores it by reference, and builds a bounded
-    worker-summary (see §4a); append a ledger RESULT record + journal artifact;
-    project compact state; mark the ledger intent APPLIED.
+    bridge captures raw output, stores it by reference, builds a bounded
+    worker-summary (§4a); append WORKER-RESULT + journal artifact;
+    project compact state; mark the worker intent APPLIED.
     Raw output is NEVER shown to the orchestrator.
-3b. done/escalate → loop ends, final summary.
-4. Budget reserved before the next call, accounted after it (§5); --yes gates spend.
+3b. action=done/escalate → finalize (terminal applied record), loop ends.
+4. Budget reserved before EACH LLM call (orchestrator and worker), accounted after (§5);
+   --yes gates spend.
 ```
 
-**Write-ahead order (per step):** `ledger intent → (worker runs) → journal/summary
-artifact → state projection → ledger applied`. The append-only ledger is written
-*before* the action and *before* the compact state, so state can never be "in the
-future" without a durable trace. (This supersedes the simpler duet rule "state
+**Write-ahead order (per step):** BOTH spend-bearing calls are bracketed —
+`decision-intent → (orchestrator call) → decision-result → worker-intent →
+(worker runs) → worker-result → journal/state projection → applied`. The
+append-only ledger is written *before* each spending call and *before* the compact
+state, so neither the orchestrator's decision/spend nor the worker's can be lost in
+a crash without a durable trace. (This supersedes the simpler duet rule "state
 before journal", which fit duet's no-spend model; the orchestrator spends tokens
 per step, so it needs a real write-ahead log.)
 
+**Key asymmetry for recovery:** the orchestrator call has **no external side
+effects** (it only decides + spends tokens), so on an ambiguous crash it is **safe
+to re-ask** (accounting the lost spend). A worker call **does** mutate the target
+(files), so it is **never auto-rerun**. This distinction drives the recovery matrix.
+
 **State files:**
 - `orch-ledger.jsonl` — **append-only WAL, the durable source of truth.** One line
-  per event: `{seq, step, kind: 'init-intent'|'init-applied'|'intent'|'result'|'applied'|'decision', worker?,
-  subtask?, summaryRef?, status?, usage?, payload?, ts}`. The `init-*` pair carries
-  the task text, participants, budgets, target, and session ids in `payload`. Never
-  rewritten.
+  per event: `{seq, step, kind, worker?, subtask?, summaryRef?, status?, usage?,
+  payload?, ts}`, where `kind` ∈ `init-intent | session-create-result | init-applied
+  | decision-intent | decision-result | worker-intent | worker-result | applied`.
+  `init-intent` carries task/target/budgets/planned-participants in `payload`;
+  `session-create-result` carries participants + session ids; `decision-result`
+  carries the validated decision + call usage. Never rewritten.
 - `orch-state.json` — a **compact projection** derived from the ledger:
   `{ task, status, step, participants:[{id,kind,transport,sessionId,memory}],
   budget:{maxSteps,maxTokens,spent}, lastDecision }`. Small, rewritten atomically;
@@ -122,9 +142,10 @@ state is local-only and must be git-ignored and documented in the runtime-files
 contract: `orch-ledger.jsonl`, `orch-state.json`, `orch-journal.md`, `orch.lock`,
 `orch-artifacts/` (raw worker output), and any per-task workspaces/worktrees. Add
 the patterns to `.gitignore` (e.g. `/orch-*`, `/orch-artifacts/`) alongside the
-existing duet runtime entries, and to `docs/RUNTIME_FILES.md`. (Note: the project
-already has the audit's P3-2 packaging gap — no `files` whitelist — so these must
-be ignored to avoid leaking task content into `npm pack`.)
+existing duet runtime entries, and to `docs/RUNTIME_FILES.md`. `package.json` now
+has a `files` whitelist (the audit's P3-2 was fixed), so these runtime files must
+be **both** git-ignored **and** kept out of the `files` whitelist — the whitelist
+default-excludes them, but do not add `orch-*` to it.
 
 **Durability invariant:** the `orch-ledger.jsonl` WAL is the source of truth; the
 compact `orch-state.json` and the orchestrator's live LLM session are both
@@ -139,14 +160,18 @@ the orchestrator.**
 
 | Ledger tail | Meaning | Resume action |
 |-------------|---------|---------------|
-| `init-intent`, no `init-applied` | setup didn't finish; **no worker tokens spent** | re-run init idempotently (recreate participant sessions) |
-| step `intent`, no `result` | the worker call **may have run and spent tokens**; outcome unknown | **do NOT re-run.** Append `result{status:'interrupted'}` + `applied`; feed that as the step summary so the **orchestrator decides** (redo as a fresh step, or move on) |
-| `result`, no `applied` | work is durable; only the projection/close didn't finish | re-project state and append `applied` (idempotent completion) — **no re-run, no extra spend** |
+| `init-intent`, no `session-create-result` | sessions not durably created; **no spend** | re-run init cleanly |
+| `session-create-result`, no `init-applied` | sessions exist (ids recorded) but init not closed | reuse the recorded sessions (or abandon them explicitly), then project state + `init-applied` |
+| `decision-intent`, no `decision-result` | the orchestrator call **may have spent tokens**, decision unknown — but it has **no external side effects** | **safe to re-ask** the orchestrator; account the interrupted call's spend as lost/unknown |
+| `decision-result`, no `worker-intent` | a decision is durable but the worker wasn't started yet | proceed: start the worker per the recorded decision (or finalize, if done/escalate) — no re-ask |
+| `worker-intent`, no `worker-result` | the worker call **may have run, spent tokens, and mutated the target** | **do NOT re-run.** Append `worker-result{status:'interrupted'}` + `applied`; feed it as the step summary so the **orchestrator decides** (redo as a fresh step, or move on) |
+| `worker-result`, no `applied` | work is durable; only the projection/close didn't finish | re-project state and append `applied` (idempotent) — **no re-run, no extra spend** |
 | journal/artifact ahead of `state` | `state` is only a projection | re-derive `state` from the ledger (the ledger, not the journal, is authority) |
 
-Because every spend-bearing action is bracketed by `intent`/`result`, a crash can
-leave at most one step ambiguous, and that one is escalated to the orchestrator
-rather than silently retried.
+Every spend-bearing call (orchestrator **and** worker) is bracketed, so a crash
+leaves at most one call ambiguous. The side-effect-free orchestrator call is
+safely re-asked; the target-mutating worker call is never auto-rerun and is instead
+surfaced to the orchestrator.
 
 ## 3. Decision protocol
 
@@ -285,6 +310,21 @@ default, MVP contract:
   per-task workspace, codex edits there, and on `done` the orchestrator emits a
   unified diff for the human to apply. Explicit, never auto-applied.
 
+**Bridge auto-commit edge cases (must be defined, else "commit after each turn" is
+underspecified):**
+- **No changes** (`git status --porcelain` empty) → no commit; the worker-summary
+  records artifact `no-op` (a valid outcome — the orchestrator may have asked codex
+  to inspect, not edit).
+- **Commit fails** (hook, lock, disk) → the worker-summary is `status: error` with
+  the git stderr; no `applied`-as-success — it becomes an error the orchestrator
+  routes on (per §5 worker-failure handling).
+- **Transparency** → `git status --porcelain` is captured into the raw artifact for
+  every codex turn, committed or not.
+- **Path discipline** → the bridge stages with an explicit pathspec scoped to the
+  worktree and refuses to commit changes to `.git/` internals; codex is already
+  sandboxed to the worktree (validated `--target`), so this is a cheap belt-and-
+  suspenders, not the primary boundary. A finer path allow/deny list is post-MVP.
+
 Either way the contract is explicit: the human knows exactly where results land
 and applies/merges them deliberately (risk-on-human, per the non-goals). What is
 NOT in the MVP: auto-merge, conflict resolution, multi-target, or applying without
@@ -342,16 +382,21 @@ action/worker-not-in-registry/empty-subtask → reject; fail-closed
 re-prompt→escalate); **worker-summary chokepoint** (raw output is stored by
 reference and never appears in the orchestrator input; a missing/malformed
 self-report is synthesized; the summary is capped at `maxSummaryChars`); WAL
-ordering (intent appended before the action, state is a projection rebuilt from
-the ledger, applied-record closes the step); budget (`maxSteps` → graceful
-escalate; `maxTokens` reserve→stop-before-call→post-fact accounting); codex
-re-injection block + memory-strategy dispatch; `--target` validated `≠ bridgeDir`;
+ordering (both `decision-*` and `worker-*` intents appended before their spending
+call; state is a projection rebuilt from the ledger; applied closes the step);
+**crash-recovery matrix** (each tail row: `decision-intent`-only → safe re-ask;
+`decision-result`-only → proceed; `worker-intent`-only → interrupted, not rerun;
+`worker-result`-only → idempotent close; `init-intent`-only → clean re-init);
+budget (`maxSteps` → graceful escalate; `maxTokens` reserve→stop-before-call→
+post-fact accounting); codex re-injection block + memory-strategy dispatch;
+`--target` realpath validation (equal / inside / containing `bridgeDir` all
+rejected); auto-commit edge cases (no-op on no changes, error on commit failure);
 worker failure → error-summary fed to orchestrator (not a throw).
 
 Integration tests (scripted, offline): happy path to `done` with a correct
-ledger; escalate path; `maxSteps` backstop; budget backstop; resume (interrupt →
-**replay `orch-ledger.jsonl`** → continue from the last applied record); a real
-`node:http` server standing in for the MiniMax transport (as in
+ledger; escalate path; `maxSteps` backstop; budget backstop; resume from each
+ambiguous WAL tail (interrupt → **replay `orch-ledger.jsonl`** → correct recovery
+action); a real `node:http` server standing in for the MiniMax transport (as in
 `lib-mvs-client`/`lib-http-json`).
 
 Guarantees: no real codex/MiniMax spawned in tests (codex via the fake hook;
