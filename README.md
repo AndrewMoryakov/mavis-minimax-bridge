@@ -292,23 +292,31 @@ Preview a future agent step without spending tokens:
 ```powershell
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 ```
 
 `duet step --dry-run` validates relay status, baton ownership, iteration limits,
-packet size, route/model or Codex CLI settings, and estimated input tokens. It
-does not call a model, write a handoff, or advance the baton.
+packet size, route/model or Codex CLI settings, selected `codexMode`, and
+estimated input tokens. It does not call a model, write a handoff, or advance
+the baton.
 
 Run one real relay step:
 
 ```powershell
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
+node .\bridge.mjs duet step --agent codex --yes --codex-mode isolated
 ```
 
 `duet step --agent minimax --yes` is token-spending and sends the bounded packet
 through the review-only MiniMax path. `duet step --agent codex --yes` is also
 token-spending and runs a separate non-interactive `codex exec` process with
 `--ignore-user-config`, `--ignore-rules`, `--ephemeral`, explicit `--cd`, and a bridge timeout.
+Codex supports `--codex-mode exec|isolated`: `exec` uses the bridge workspace
+with `workspace-write`, while `isolated` runs from an empty scratch workspace
+with `read-only` sandboxing and `--skip-git-repo-check`. Isolated mode reduces
+workspace exposure, but it is not a hard security boundary and still relies on
+Codex following the packet-only instruction.
 Both commands store the answer as a pending local handoff, apply it through the
 same hardened `duet pass` validation, and redact the answer in stdout unless
 `--raw` is passed. If apply fails, the baton is not advanced and the pending
@@ -328,8 +336,10 @@ would act next, estimated input tokens, loop limits, verifier configuration,
 and stop reasons such as terminal status or token budget.
 
 Use `--profile smoke` for compact live validation. It defaults to two rounds,
-one Codex step, one MiniMax step, a smaller packet budget, and the standard
-token budget. Explicit `--max-*` flags still override the profile.
+one Codex step, one MiniMax step, a smaller packet budget, the standard token
+budget, and `--codex-mode isolated` so Codex starts from a scratch read-only
+workspace unless the operator explicitly overrides the mode. Explicit `--max-*`
+and `--codex-mode` flags still override the profile.
 
 `duet loop --yes` is token-spending. It alternates the current baton holder
 through the same hardened `duet step --agent <agent> --yes` path, optionally
@@ -453,6 +463,7 @@ node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run

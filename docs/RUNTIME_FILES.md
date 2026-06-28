@@ -12,6 +12,7 @@ duet-journal.md
 duet.lock
 duet-state.json.*.tmp
 duet-journal.md.*.tmp
+.codex-isolated-*.local/
 ```
 
 They are intentionally ignored by git because they can contain local paths,
@@ -38,7 +39,9 @@ node .\scripts\init-runtime.mjs --empty-jsonl
 `duet-state.json` and `duet-journal.md` are created by `duet init`, not by the
 runtime initializer. `duet.lock` is a short-lived guard file created while a
 duet command updates state. Atomic duet temp files may appear only if a process
-dies mid-write; they are ignored by git and can be deleted after inspection.
+dies mid-write. `.codex-isolated-*.local/` directories are disposable scratch
+workspaces from interrupted isolated Codex runs. These files are ignored by git
+and can be deleted after inspection.
 
 Run `node .\bridge.mjs doctor` before workspace-sensitive commands if the shell
 may be in another project. `doctor` is local-only and does not write runtime

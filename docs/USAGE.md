@@ -41,6 +41,7 @@ node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
@@ -89,4 +90,7 @@ Safety notes:
 
 For the longer live flow, use
 [`docs/LIVE_RUNBOOK.md`](LIVE_RUNBOOK.md): `duet start`, `duet loop --dry-run`,
-one explicitly approved `duet loop --yes`, then `duet report`.
+one explicitly approved `duet loop --yes`, then `duet report`. The smoke
+profile uses isolated Codex mode by default; it starts Codex from a scratch
+read-only workspace but is not a hard security boundary. Add `--codex-mode exec`
+only for tasks where Codex must inspect or edit the bridge workspace.

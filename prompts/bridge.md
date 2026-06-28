@@ -29,8 +29,13 @@ Rules:
 - Use `duet step --agent minimax --yes` or `duet step --agent codex --yes` only
   after explicit token-spending approval; each runs one relay turn and applies
   the handoff.
+- Prefer `duet step --agent codex --yes --codex-mode isolated` for compact
+  Codex review turns. Isolated mode starts Codex from a scratch read-only
+  workspace with `--skip-git-repo-check`, but it is not a hard security
+  boundary.
 - Use `duet loop --dry-run` to preview an autonomous loop without spending
-  tokens. Prefer `--profile smoke` for compact live validation.
+  tokens. Prefer `--profile smoke` for compact live validation; smoke defaults
+  Codex to `--codex-mode isolated`.
 - Use `duet loop --yes` only after explicit token-spending approval; it can run
   both Codex and MiniMax steps.
 - Use `duet report` after a loop or step sequence to summarize stop reasons,

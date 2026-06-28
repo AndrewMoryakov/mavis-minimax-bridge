@@ -398,6 +398,7 @@ test("duet step codex dry-run validates baton and spends no tokens", (t) => {
   assert.equal(dryRun.event, "duet-step-dry-run");
   assert.equal(dryRun.agent, "codex");
   assert.equal(dryRun.mode, "exec");
+  assert.equal(dryRun.codexMode, "exec");
   assert.equal(dryRun.tokenSpending, false);
   assert.equal(dryRun.wouldCallModel, true);
   assert.equal(dryRun.liveCallAllowed, true);
@@ -405,6 +406,8 @@ test("duet step codex dry-run validates baton and spends no tokens", (t) => {
   assert.equal(dryRun.route.model, "codex-cli");
   assert.equal(typeof dryRun.route.cli, "string");
   assert.equal(dryRun.route.sandbox, "workspace-write");
+  assert.equal(dryRun.route.workspaceMode, "exec");
+  assert.equal(dryRun.route.skipGitRepoCheck, false);
   assert.equal(typeof dryRun.route.timeoutSec, "number");
   assert.equal(dryRun.packet.rawSha256, undefined);
   assert.equal(typeof dryRun.packet.redactedSha256, "string");
@@ -413,6 +416,19 @@ test("duet step codex dry-run validates baton and spends no tokens", (t) => {
   assert.equal(fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8"), ledgerBefore);
   assert.equal(fs.readFileSync(path.join(dir, "duet-state.json"), "utf8"), stateBefore);
   assert.equal(fs.readFileSync(path.join(dir, "duet-journal.md"), "utf8"), journalBefore);
+
+  const isolated = ok(runBridge(dir, ["duet", "step", "--agent", "codex", "--dry-run", "--codex-mode", "isolated", "--raw"]));
+  assert.equal(isolated.codexMode, "isolated");
+  assert.equal(isolated.route.sandbox, "read-only");
+  assert.equal(isolated.route.workspaceMode, "isolated");
+  assert.equal(isolated.route.skipGitRepoCheck, true);
+  assert.equal(isolated.route.hardSecurityBoundary, false);
+  assert.match(isolated.warning, /not_hard_security_boundary/);
+  assert.match(isolated.prompt.text, /isolated scratch mode/);
+  assert.match(isolated.prompt.text, /not a hard security boundary/);
+
+  fails(runBridge(dir, ["duet", "step", "--agent", "codex", "--dry-run", "--codex-mode", "bad"]), /--codex-mode must be isolated or exec/);
+  fails(runBridge(dir, ["duet", "step", "--agent", "codex", "--dry-run", "--codex-mode"]), /--codex-mode requires isolated or exec/);
 });
 
 test("duet step minimax yes applies a fake review-only handoff without leaking by default", (t) => {
@@ -469,6 +485,7 @@ test("duet step codex yes applies a fake exec handoff without leaking by default
   assert.equal(result.event, "duet-step");
   assert.equal(result.agent, "codex");
   assert.equal(result.mode, "exec");
+  assert.equal(result.codexMode, "exec");
   assert.equal(result.applyStatus, "applied");
   assert.equal(result.tokenSpending, true);
   assert.equal(result.provider, "openai");
@@ -489,6 +506,30 @@ test("duet step codex yes applies a fake exec handoff without leaking by default
   assert.equal(fs.existsSync(result.appliedPath), true);
   const ledger = fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8");
   assert.match(ledger, /"agent":"codex"/);
+});
+
+test("duet step codex isolated yes applies a fake handoff and reports codex mode", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Codex isolated live goal");
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: "Status: running\n\nCodex isolated mode reply.",
+  };
+  const result = ok(runBridge(dir, ["duet", "step", "--agent", "codex", "--yes", "--codex-mode", "isolated"], { env }));
+  assert.equal(result.event, "duet-step");
+  assert.equal(result.agent, "codex");
+  assert.equal(result.mode, "exec");
+  assert.equal(result.codexMode, "isolated");
+  assert.equal(result.applyStatus, "applied");
+  assert.equal(result.model, "codex-cli:test");
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.baton, "minimax");
+  assert.equal(state.status, "running");
 });
 
 test("duet step codex yes replaces an empty fake handoff with a fallback", (t) => {
@@ -602,15 +643,20 @@ test("duet loop dry-run previews next agent step and does not mutate relay files
   assert.deepEqual(dryRun.stopReasons, []);
   assert.equal(dryRun.nextStep.agent, "codex");
   assert.equal(dryRun.nextStep.mode, "exec");
+  assert.equal(dryRun.nextStep.codexMode, "exec");
   assert.equal(dryRun.nextStep.tokenSpending, true);
   assert.equal(dryRun.nextStep.withinTokenBudget, true);
   assert.equal(typeof dryRun.nextStep.estimatedInputTokens, "number");
   assert.equal(dryRun.nextStep.route.cli, "codex.cmd");
+  assert.equal(dryRun.nextStep.route.sandbox, "workspace-write");
+  assert.equal(dryRun.nextStep.route.workspaceMode, "exec");
+  assert.equal(dryRun.nextStep.route.skipGitRepoCheck, false);
   assert.equal(dryRun.verifier.path.path, path.join(dir, "verify.mjs"));
   assert.equal(dryRun.verifier.path.basename, "verify.mjs");
   assert.deepEqual(dryRun.verifier.args, ["--fast"]);
   assert.equal(dryRun.limits.maxRounds, 4);
   assert.equal(dryRun.limits.profile, "default");
+  assert.equal(dryRun.limits.codexMode, "exec");
   assert.deepEqual(dryRun.requirements.requiredAgents, []);
   assert.deepEqual(dryRun.requirements.satisfiedAgents, []);
   assert.deepEqual(dryRun.requirements.missingAgents, []);
@@ -656,12 +702,23 @@ test("duet loop smoke profile applies compact defaults and allows overrides", (t
   assert.equal(smoke.limits.maxMiniMaxSteps, 1);
   assert.equal(smoke.limits.maxTokens, 60000);
   assert.equal(smoke.limits.maxPacketChars, 20000);
+  assert.equal(smoke.limits.codexMode, "isolated");
+  assert.equal(smoke.nextStep.codexMode, "isolated");
+  assert.match(smoke.nextStep.command, /--codex-mode isolated/);
+  assert.equal(smoke.nextStep.route.sandbox, "read-only");
+  assert.equal(smoke.nextStep.route.workspaceMode, "isolated");
+  assert.equal(smoke.nextStep.route.skipGitRepoCheck, true);
+  assert.equal(smoke.nextStep.route.hardSecurityBoundary, false);
 
-  const override = ok(runBridge(dir, ["duet", "loop", "--dry-run", "--profile", "smoke", "--max-rounds", "4"]));
+  const override = ok(runBridge(dir, ["duet", "loop", "--dry-run", "--profile", "smoke", "--max-rounds", "4", "--codex-mode", "exec"]));
   assert.equal(override.limits.profile, "smoke");
   assert.equal(override.limits.maxRounds, 4);
+  assert.equal(override.limits.codexMode, "exec");
+  assert.equal(override.nextStep.route.sandbox, "workspace-write");
 
   fails(runBridge(dir, ["duet", "loop", "--dry-run", "--profile", "huge"]), /--profile must be smoke or default/);
+  fails(runBridge(dir, ["duet", "loop", "--dry-run", "--codex-mode", "bad"]), /--codex-mode must be isolated or exec/);
+  fails(runBridge(dir, ["duet", "loop", "--dry-run", "--codex-mode"]), /--codex-mode requires isolated or exec/);
 });
 
 test("duet loop dry-run validates required agents", (t) => {
@@ -741,6 +798,7 @@ test("duet loop yes suppresses premature done until required agents contribute",
   assert.equal(result.counts.codexSteps, 1);
   assert.equal(result.counts.minimaxSteps, 1);
   assert.equal(result.steps[0].agent, "codex");
+  assert.equal(result.steps[0].codexMode, "exec");
   assert.equal(result.steps[0].status, "running");
   assert.equal(result.steps[0].modelStatus, "done");
   assert.equal(result.steps[0].suppressedTerminalStatus, "done");
@@ -761,7 +819,36 @@ test("duet loop yes suppresses premature done until required agents contribute",
   const report = ok(runBridge(dir, ["duet", "report"]));
   assert.deepEqual(report.lastLoop.requirements.requiredAgents, ["codex", "minimax"]);
   assert.equal(report.lastLoop.suppressedTerminalStatuses.length, 1);
+  assert.equal(report.lastLoop.steps[0].codexMode, "exec");
   assert.equal(report.lastLoop.steps[0].suppressedTerminalStatus, "done");
+
+  const markdownReport = runBridge(dir, ["duet", "report", "--format", "markdown"]);
+  assert.equal(markdownReport.status, 0, markdownReport.text);
+  assert.match(markdownReport.stdout, /codexMode=exec/);
+});
+
+test("duet report preserves loop profile and codex mode in continue commands", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Report continue command goal");
+
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "5"]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: "Status: running\n\nStill reviewing.",
+  };
+  ok(runBridge(dir, ["duet", "loop", "--yes", "--profile", "smoke", "--require-agents", "codex,minimax"], { env }));
+
+  const report = ok(runBridge(dir, ["duet", "report"]));
+  assert.match(report.next.continue[0], /--profile smoke/);
+  assert.match(report.next.continue[0], /--codex-mode isolated/);
+  assert.match(report.next.continue[1], /--profile smoke/);
+  assert.match(report.next.continue[1], /--codex-mode isolated/);
+
+  const markdownReport = runBridge(dir, ["duet", "report", "--format", "markdown"]);
+  assert.equal(markdownReport.status, 0, markdownReport.text);
+  assert.match(markdownReport.stdout, /duet loop --dry-run --profile smoke --codex-mode isolated/);
 });
 
 test("duet loop yes does not suppress human escalation for required agents", (t) => {
@@ -1527,6 +1614,7 @@ test("runtime files, duet temp files, and local scratch files are git-ignored", 
     "duet-state.json.123.tmp",
     "duet-journal.md.123.tmp",
     "handoff.local.md",
+    ".codex-isolated-2026-06-28T00-00-00-000Z-abc123.local/",
     "live-smoke-tetris-zero-20260627/index.html",
   ];
 
@@ -1562,6 +1650,16 @@ test("installable skill and prompt surfaces document duet relay", () => {
     assert.match(text, /let's go/, `${relative} should document the natural-language start`);
     assert.match(text, /does not wake, message, or\s+activate/, `${relative} should clarify that relay does not auto-activate the other agent`);
   }
+
+  for (const relative of ["skills/bridge/SKILL.md", "skills/codex-bridge/SKILL.md", "prompts/bridge.md"]) {
+    const text = fs.readFileSync(path.join(repoRoot, relative), "utf8");
+    assert.match(text, /--codex-mode isolated/, `${relative} should document isolated Codex mode`);
+    assert.match(text, /not\s+a\s+hard\s+security\s+boundary|not\s+hard\s+security/, `${relative} should avoid overstating isolated mode`);
+  }
+
+  const runtimeFiles = fs.readFileSync(path.join(repoRoot, "docs/RUNTIME_FILES.md"), "utf8");
+  assert.match(runtimeFiles, /\.codex-isolated-\*\.local\//, "runtime docs should list isolated Codex scratch directories");
+  assert.match(runtimeFiles, /disposable/, "runtime docs should explain isolated scratch cleanup");
 
   const runbook = fs.readFileSync(path.join(repoRoot, "docs/LIVE_RUNBOOK.md"), "utf8");
   assert.match(runbook, /duet start --goal/, "live runbook should start with duet start");

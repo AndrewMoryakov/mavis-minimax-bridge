@@ -111,6 +111,7 @@ node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
@@ -143,17 +144,20 @@ Use `duet packet export --agent codex|minimax` when either side needs a compact
 derived packet. Packet exports are local-only projections, not runtime state.
 
 Use `duet step --dry-run` before any real duet step. It is local-only,
-token-free, and validates status, baton, route/model or Codex CLI settings, and
-estimated input tokens.
+token-free, and validates status, baton, route/model or Codex CLI settings,
+selected `codexMode`, and estimated input tokens.
 
 Run `duet step --agent minimax --yes` or `duet step --agent codex --yes` only
 after explicit token-spending approval. MiniMax uses the review-only model path.
-Codex uses a separate non-interactive `codex exec` process. Both write a pending
-local handoff, apply it through hardened `duet pass`, and redact the answer by
-default.
+Codex uses a separate non-interactive `codex exec` process. Codex supports
+`--codex-mode exec|isolated`; isolated mode uses an empty scratch workspace,
+`read-only` sandboxing, and `--skip-git-repo-check`. It reduces workspace
+exposure but is not a hard security boundary. Both write a pending local handoff,
+apply it through hardened `duet pass`, and redact the answer by default.
 
 Use `duet loop --dry-run` to preview the autonomous loop without spending
-tokens. Prefer `--profile smoke` for compact live validation. It reports stop reasons, next agent, token estimate, limits, and
+tokens. Prefer `--profile smoke` for compact live validation; smoke defaults
+Codex to `--codex-mode isolated`. It reports stop reasons, next agent, token estimate, limits, and
 optional verifier configuration.
 
 Run `duet loop --yes` only after explicit token-spending approval. It alternates

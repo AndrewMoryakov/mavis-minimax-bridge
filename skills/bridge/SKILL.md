@@ -65,6 +65,7 @@ node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run
@@ -218,7 +219,8 @@ node .\bridge.mjs duet step --agent minimax --dry-run
 ```
 
 Preview a future agent step without spending tokens. It validates baton, status,
-packet size, route/model or Codex CLI settings, and estimated input tokens.
+packet size, route/model or Codex CLI settings, selected `codexMode`, and
+estimated input tokens.
 
 ### `/bridge duet step minimax`
 
@@ -238,11 +240,15 @@ Run only after explicit token-spending approval:
 
 ```powershell
 node .\bridge.mjs duet step --agent codex --yes
+node .\bridge.mjs duet step --agent codex --yes --codex-mode isolated
 ```
 
 Runs one non-interactive Codex relay turn through `codex exec`, stores the last
 message as a pending local handoff, applies it through hardened `duet pass`, and
-redacts the answer unless `--raw` is explicitly passed.
+redacts the answer unless `--raw` is explicitly passed. Use
+`--codex-mode isolated` for compact review turns that should start from a
+scratch read-only workspace; this reduces workspace exposure but is not a hard
+security boundary.
 
 ### `/bridge duet loop dry-run`
 
@@ -254,8 +260,9 @@ node .\bridge.mjs duet loop --dry-run --profile smoke
 ```
 
 Previews the autonomous loop without spending tokens. Prefer `--profile smoke`
-for compact live validation. It reports stop reasons, next agent, token
-estimate, limits, and optional verifier configuration.
+for compact live validation; smoke defaults Codex to `--codex-mode isolated`.
+It reports stop reasons, next agent, token estimate, limits, and optional
+verifier configuration.
 
 ### `/bridge duet loop`
 

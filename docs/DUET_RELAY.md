@@ -163,23 +163,28 @@ Preview a future agent step without spending tokens:
 ```powershell
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 ```
 
 The dry run validates baton ownership, status, iteration limits, packet size,
-route/model or Codex CLI settings, and estimated input tokens. It does not call
-an agent or advance the relay.
+route/model or Codex CLI settings, selected `codexMode`, and estimated input
+tokens. It does not call an agent or advance the relay.
 
 Run one real agent step:
 
 ```powershell
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
+node .\bridge.mjs duet step --agent codex --yes --codex-mode isolated
 ```
 
 `--yes` authorizes one token-spending agent call. MiniMax steps use the
 review-only MiniMax path. Codex steps run a separate `codex exec` process with
-`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, explicit `--cd`, `workspace-write`
-sandboxing, and a bridge timeout. The bridge stores the answer as a pending
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, explicit `--cd`, and a
+bridge timeout. `--codex-mode exec` keeps the old bridge-workspace
+`workspace-write` behavior; `--codex-mode isolated` uses an empty scratch
+workspace, `read-only` sandboxing, and `--skip-git-repo-check`. It reduces
+workspace exposure, but it is not a hard security boundary. The bridge stores the answer as a pending
 `.local.md` handoff, applies it via the same hardened `duet pass` path, then
 returns the baton to the other agent for `Status: running` replies or stops on
 `done` / `human_escalation`. If applying the handoff fails, state is not

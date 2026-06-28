@@ -60,6 +60,13 @@ For a shorter smoke validation, use the built-in smoke profile:
 node .\bridge.mjs duet loop --dry-run --profile smoke --require-agents codex,minimax
 ```
 
+The smoke profile defaults Codex to `--codex-mode isolated`: Codex CLI starts in
+an empty scratch workspace with a `read-only` sandbox and `--skip-git-repo-check`.
+This reduces accidental workspace reads/writes, but it is not a hard security
+boundary.
+Use `--codex-mode exec` only when the live task intentionally needs Codex to
+inspect or edit the bridge workspace.
+
 Check:
 
 - `wouldRunLoop` is `true`.

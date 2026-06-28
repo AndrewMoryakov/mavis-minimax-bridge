@@ -41,12 +41,14 @@ Covered areas:
 - `duet step --agent minimax --dry-run` baton/status validation, token estimate,
   redaction, raw prompt opt-in, and no ledger/model-call side effect.
 - `duet step --agent codex --dry-run` baton/status validation, token estimate,
-  redaction, Codex CLI settings, and no ledger/agent-call side effect.
+  redaction, Codex CLI settings, `exec`/`isolated` mode routing, and no
+  ledger/agent-call side effect.
 - `duet step --agent minimax --yes` offline fake-model path: successful handoff
   apply, redacted default output, pending handoff recovery on apply failure, and
   wrong-baton refusal before any model call.
 - `duet step --agent codex --yes` offline fake-agent path: successful handoff
-  apply, redacted default output, usage reporting, and baton transfer to MiniMax.
+  apply, redacted default output, usage reporting, `codexMode` reporting, and
+  baton transfer to MiniMax.
 - `duet loop --dry-run` local preflight: next-agent preview, token budget stop,
   terminal stop, verifier config, required-agent validation, redaction, and no
   runtime-file mutation.

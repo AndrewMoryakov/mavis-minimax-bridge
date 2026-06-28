@@ -288,6 +288,7 @@ node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet packet export --agent minimax --format markdown --out .\duet-packet.local.md
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
+node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
@@ -349,7 +350,8 @@ the bridge root.
 
 Use `duet step --dry-run` to preview a future agent step without spending
 tokens. It validates status, baton ownership, iteration limits, packet size,
-route/model or Codex CLI settings, and estimated input tokens.
+route/model or Codex CLI settings, selected `codexMode`, and estimated input
+tokens.
 
 Use `duet step --agent minimax --yes` to run one real MiniMax review-only relay
 turn. This can spend tokens. The bridge writes MiniMax's answer to a pending
@@ -359,8 +361,11 @@ pending handoff path is returned for manual recovery.
 
 Use `duet step --agent codex --yes` to run one real non-interactive Codex relay
 turn. This can spend OpenAI/Codex tokens. The bridge invokes `codex exec` with
-`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, explicit `--cd`, `workspace-write`
-sandboxing, and a bridge timeout. The last Codex message is written to a pending
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, explicit `--cd`, and a
+bridge timeout. `--codex-mode exec` runs in the bridge workspace with
+`workspace-write`; `--codex-mode isolated` runs in an empty scratch workspace
+with `read-only` and `--skip-git-repo-check`. This reduces workspace exposure,
+but it is not a hard security boundary. The last Codex message is written to a pending
 `.local.md` handoff and applied through the same hardened `duet pass` path.
 
 Use `duet loop --dry-run` to preview a future autonomous loop without spending
@@ -370,8 +375,10 @@ loop limits, optional verifier configuration, required-agent settings, and stop
 reasons.
 
 Add `--profile smoke` for compact live validation. It defaults to two rounds,
-one Codex step, one MiniMax step, a smaller packet budget, and the standard
-token budget. Explicit `--max-*` flags still override the profile.
+one Codex step, one MiniMax step, a smaller packet budget, the standard token
+budget, and `--codex-mode isolated`. Isolated mode uses a scratch read-only
+workspace, not hard security. Explicit `--max-*` and `--codex-mode` flags still
+override the profile.
 
 Use `duet loop --yes` to run a bounded autonomous loop. This can spend both
 Codex/OpenAI and MiniMax tokens. It alternates the current baton holder through
