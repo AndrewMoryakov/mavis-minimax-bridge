@@ -31,6 +31,13 @@ test("normalizeConfig merges env defaults and dedupes deny sessions", () => {
   assert.equal(config.env.MAVIS_PROMPT_CACHE_MODE, "enforce");
   assert.deepEqual(config.denySessions, ["mvs_a", "mvs_b"]);
   assert.equal(config.claudeCli, null);
+  assert.equal(config.claudeCliSearchTimeoutMs, 5000);
+  assert.equal(config.claudeRunnerTimeoutMs, 60000);
+  assert.equal(config.claudeRequireAvailable, false);
+  assert.equal(config.claudeModel, null);
+  assert.equal(config.claudeMaxTurns, 1);
+  assert.equal(config.claudeMaxBudgetUsd, null);
+  assert.equal(config.claudePermissionMode, "deny");
 });
 
 test("parseConfigValue parses JSON scalars and preserves plain strings", () => {
@@ -59,6 +66,15 @@ test("validateConfig rejects invalid config shapes", () => {
   );
   assert.throws(() => normalizeConfig({ maxInputToken: 123 }), /unknown config key: maxInputToken/);
   assert.throws(() => normalizeConfig({ claudeCli: 123 }), /claudeCli/);
+  assert.throws(() => normalizeConfig({ claudeCliSearchTimeoutMs: 99 }), /claudeCliSearchTimeoutMs/);
+  assert.throws(() => normalizeConfig({ claudeRunnerTimeoutMs: 999 }), /claudeRunnerTimeoutMs/);
+  assert.throws(() => normalizeConfig({ claudeRequireAvailable: "yes" }), /claudeRequireAvailable/);
+  assert.throws(() => normalizeConfig({ claudeModel: 123 }), /claudeModel/);
+  assert.throws(() => normalizeConfig({ claudeMaxTurns: 0 }), /claudeMaxTurns/);
+  assert.throws(() => normalizeConfig({ claudeMaxTurns: 11 }), /claudeMaxTurns/);
+  assert.throws(() => normalizeConfig({ claudeMaxTurns: 1.5 }), /claudeMaxTurns/);
+  assert.throws(() => normalizeConfig({ claudeMaxBudgetUsd: 0 }), /claudeMaxBudgetUsd/);
+  assert.throws(() => normalizeConfig({ claudePermissionMode: "allow" }), /claudePermissionMode/);
   assert.throws(
     () => normalizeConfig({ env: { MAVIS_CONTEXT_BUDGET_PROFIL: "max" } }),
     /unknown env config key: MAVIS_CONTEXT_BUDGET_PROFIL/,
@@ -66,6 +82,10 @@ test("validateConfig rejects invalid config shapes", () => {
 
   assert.equal(normalizeConfig({ claudeCli: "" }).claudeCli, null);
   assert.equal(normalizeConfig({ claudeCli: "claude-custom" }).claudeCli, "claude-custom");
+  assert.equal(normalizeConfig({ claudeModel: "" }).claudeModel, null);
+  assert.equal(normalizeConfig({ claudeModel: "sonnet" }).claudeModel, "sonnet");
+  assert.equal(normalizeConfig({ claudeMaxBudgetUsd: "0.25" }).claudeMaxBudgetUsd, 0.25);
+  assert.equal(normalizeConfig({ claudeMaxTurns: "2" }).claudeMaxTurns, 2);
 
   const config = normalizeConfig({});
   assert.doesNotThrow(() => validateConfig(config));

@@ -256,9 +256,9 @@ function sentinelInfo(relativePath, options = {}) {
 }
 
 function doctorWarning(claude) {
-  if (!claude || claude.available) return null;
+  if (!claude || claude.spawnable) return null;
   if (claude.kind === "missing") return "claude cli missing";
-  if (claude.kind === "powershell-function") return "claude cli is a PowerShell function or alias";
+  if (claude.kind === "powershell-function") return "claude cli is a non-spawnable PowerShell command";
   if (claude.kind === "error") return "claude cli probe failed";
   return null;
 }
@@ -267,6 +267,8 @@ function publicClaudeDiagnostic(claude) {
   return {
     configuredCli: claude.configuredCli,
     available: claude.available,
+    found: claude.found,
+    spawnable: claude.spawnable,
     kind: claude.kind,
     command: claude.command,
     path: claude.path,
@@ -305,11 +307,15 @@ async function doctorReport() {
   if (git.bridgeDir.available && !git.bridgeDir.matchesExpectedRoot) {
     warnings.push("bridge directory git root does not match bridge root");
   }
-  const claude = publicClaudeDiagnostic(await resolveClaudeCli({ configuredCli: config.claudeCli }));
+  const claude = publicClaudeDiagnostic(await resolveClaudeCli({
+    configuredCli: config.claudeCli,
+    timeoutMs: config.claudeCliSearchTimeoutMs,
+  }));
   const claudeWarning = doctorWarning(claude);
   if (claudeWarning) warnings.push(claudeWarning);
+  const claudeRequiredFailure = Boolean(config.claudeRequireAvailable && !claude.spawnable);
 
-  const verdict = !cwdMatchesExpectedRoot || missingRequiredSentinels.length > 0 || packageNameMismatch || configLoadError
+  const verdict = !cwdMatchesExpectedRoot || missingRequiredSentinels.length > 0 || packageNameMismatch || configLoadError || claudeRequiredFailure
     ? "fail"
     : warnings.length > 0
       ? "warn"
@@ -1248,6 +1254,13 @@ function publicConfigSummary() {
     askMaxSourceContextChars: config.askMaxSourceContextChars,
     duetPacketMaxChars: config.duetPacketMaxChars,
     claudeCli: config.claudeCli,
+    claudeCliSearchTimeoutMs: config.claudeCliSearchTimeoutMs,
+    claudeRunnerTimeoutMs: config.claudeRunnerTimeoutMs,
+    claudeRequireAvailable: config.claudeRequireAvailable,
+    claudeModel: config.claudeModel,
+    claudeMaxTurns: config.claudeMaxTurns,
+    claudeMaxBudgetUsd: config.claudeMaxBudgetUsd,
+    claudePermissionMode: config.claudePermissionMode,
     asciiConsole: config.asciiConsole,
     denySessionsCount: config.denySessions.length,
     mode: modeState(),
@@ -1286,6 +1299,13 @@ function setConfigKey(key, value) {
     "codexCli",
     "codexStepTimeoutSec",
     "claudeCli",
+    "claudeCliSearchTimeoutMs",
+    "claudeRunnerTimeoutMs",
+    "claudeRequireAvailable",
+    "claudeModel",
+    "claudeMaxTurns",
+    "claudeMaxBudgetUsd",
+    "claudePermissionMode",
     "asciiConsole",
   ]);
   const next = { ...config, env: { ...(config.env || {}) }, denySessions: [...config.denySessions] };

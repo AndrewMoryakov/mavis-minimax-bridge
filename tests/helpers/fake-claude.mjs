@@ -17,6 +17,17 @@ function writeJson(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
+function readStdin() {
+  return new Promise((resolve) => {
+    let text = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      text += chunk;
+    });
+    process.stdin.on("end", () => resolve(text));
+  });
+}
+
 if (mode === "happy") {
   writeFixture("stream-json.happy.ndjson");
   process.exit(0);
@@ -47,6 +58,38 @@ if (mode === "control_request") {
     total_cost_usd: 0,
     session_id: "claude-fixture-control",
   });
+  process.exit(0);
+}
+
+if (mode === "stdin_echo") {
+  const input = await readStdin();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(input);
+  } catch (_) {
+    process.stderr.write("invalid stdin json\n");
+    process.exit(3);
+  }
+  writeJson({ type: "system", subtype: "init", session_id: "claude-fixture-stdin", model: "fake" });
+  writeJson({
+    type: "assistant",
+    message: { content: [{ type: "text", text: parsed?.message?.content?.[0]?.text || "" }] },
+  });
+  writeJson({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    total_cost_usd: 0,
+    num_turns: 1,
+    session_id: "claude-fixture-stdin",
+  });
+  process.exit(0);
+}
+
+if (mode === "stderr_secret") {
+  process.stderr.write("\u001b[31mAuthorization: Bearer sk-secret-value API_TOKEN=abc123\u001b[0m\n");
+  writeJson({ type: "system", subtype: "init", session_id: "claude-fixture-secret", model: "fake" });
+  writeJson({ type: "result", subtype: "success", is_error: false, total_cost_usd: 0, num_turns: 1 });
   process.exit(0);
 }
 

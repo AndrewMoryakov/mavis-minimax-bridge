@@ -4,9 +4,14 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  buildClaudeArgs,
   classifyClaudePath,
   defaultClaudeCli,
+  parseClaudeStreamJson,
+  redactClaudeEnv,
+  redactClaudeText,
   resolveClaudeCli,
+  runClaudePrompt,
 } from "../lib/claude-code.mjs";
 
 const fakeClaude = path.resolve("tests", "helpers", "fake-claude.mjs");
@@ -304,4 +309,141 @@ test("resolveClaudeCli turns PowerShell probe failures into error diagnostics", 
   assert.equal(resolved.kind, "error");
   assert.equal(resolved.available, false);
   assert.match(resolved.warning, /PowerShell/);
+});
+
+test("buildClaudeArgs returns argv array defaults and optional model budget flags", () => {
+  assert.deepEqual(buildClaudeArgs({}), [
+    "--print",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--max-turns",
+    "1",
+  ]);
+  const args = buildClaudeArgs({
+    claudeModel: "claude-sonnet-4",
+    claudeMaxTurns: 2,
+    claudeMaxBudgetUsd: 0.25,
+  });
+  assert.ok(args.every((arg) => typeof arg === "string"));
+  assert.deepEqual(args.slice(-6), ["--max-turns", "2", "--model", "claude-sonnet-4", "--max-budget-usd", "0.25"]);
+});
+
+test("parseClaudeStreamJson normalizes happy, error, malformed, and control request streams", async () => {
+  const happy = parseClaudeStreamJson((await runFakeClaude("happy")).stdout);
+  assert.equal(happy.ok, true);
+  assert.equal(happy.sessionId, "claude-fixture-happy");
+  assert.equal(happy.model, "claude-sonnet-4");
+  assert.match(happy.answer, /Stage 0 can be implemented/);
+  assert.equal(happy.costUsd, 0.0123);
+
+  const error = parseClaudeStreamJson((await runFakeClaude("error")).stdout);
+  assert.equal(error.ok, false);
+  assert.equal(error.isError, true);
+  assert.equal(error.resultSubtype, "error_max_turns");
+
+  const malformed = parseClaudeStreamJson((await runFakeClaude("malformed")).stdout);
+  assert.equal(malformed.ok, false);
+  assert.equal(malformed.diagnostics.malformedLines.length, 2);
+
+  const control = parseClaudeStreamJson((await runFakeClaude("control_request")).stdout);
+  assert.equal(control.ok, false);
+  assert.equal(control.isError, true);
+  assert.equal(control.resultSubtype, "control_request");
+  assert.deepEqual(control.diagnostics.controlRequest, { type: "control_request", requestId: "r1", toolName: "Read" });
+});
+
+test("redactClaudeText strips ansi and secrets while redactClaudeEnv is key based", () => {
+  const redacted = redactClaudeText("\u001b[31mAuthorization: Bearer sk-secret API_TOKEN=abc visible-value\u001b[0m");
+  assert.equal(redacted.includes("sk-secret"), false);
+  assert.equal(redacted.includes("abc"), false);
+  assert.match(redacted, /visible-value/);
+
+  const env = redactClaudeEnv({ API_TOKEN: "abc", NORMAL: "contains TOKEN word but is not a secret key" });
+  assert.equal(env.API_TOKEN, "[REDACTED]");
+  assert.equal(env.NORMAL, "contains TOKEN word but is not a secret key");
+});
+
+function fakeSpawnImpl(mode, options = {}) {
+  return (command, args, spawnOptions) => {
+    assert.equal(command, "fake-claude");
+    assert.ok(args.every((arg) => typeof arg === "string"));
+    return spawn(process.execPath, [fakeClaude, ...args], {
+      ...spawnOptions,
+      env: fakeClaudeEnv(mode, { delayMs: options.delayMs }),
+      windowsHide: true,
+    });
+  };
+}
+
+test("runClaudePrompt sends stream-json user envelope and normalizes success", async () => {
+  const result = await runClaudePrompt({
+    prompt: "hello claude",
+    cli: { available: true, command: "fake-claude" },
+    config: { claudeMaxTurns: 1, claudeRunnerTimeoutMs: 5000 },
+    spawnImpl: fakeSpawnImpl("stdin_echo"),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.answer, "hello claude");
+  assert.equal(result.sessionId, "claude-fixture-stdin");
+  assert.equal(result.exitCode, 0);
+});
+
+test("runClaudePrompt returns missing_cli without spawning when cli is unavailable", async () => {
+  let spawned = false;
+  const result = await runClaudePrompt({
+    prompt: "hello",
+    cli: { available: false, kind: "missing", warning: "missing" },
+    spawnImpl() {
+      spawned = true;
+      throw new Error("should not spawn");
+    },
+  });
+
+  assert.equal(spawned, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.resultSubtype, "missing_cli");
+});
+
+test("runClaudePrompt pins non-zero exit, timeout, and stderr redaction shapes", async () => {
+  const nonZero = await runClaudePrompt({
+    prompt: "hello",
+    cli: { available: true, command: "fake-claude" },
+    config: { claudeRunnerTimeoutMs: 5000 },
+    spawnImpl: fakeSpawnImpl("unknown_mode"),
+  });
+  assert.equal(nonZero.ok, false);
+  assert.equal(nonZero.isError, true);
+  assert.equal(nonZero.exitCode, 2);
+  assert.equal(nonZero.resultSubtype, "non_zero_exit");
+  assert.match(nonZero.diagnostics.stderrSummary, /unknown FAKE_CLAUDE_MODE/);
+
+  const secret = await runClaudePrompt({
+    prompt: "hello",
+    cli: { available: true, command: "fake-claude" },
+    config: { claudeRunnerTimeoutMs: 5000 },
+    spawnImpl: fakeSpawnImpl("stderr_secret"),
+  });
+  assert.equal(secret.ok, true);
+  assert.equal(secret.diagnostics.stderrSummary.includes("sk-secret-value"), false);
+  assert.equal(secret.diagnostics.stderrSummary.includes("abc123"), false);
+
+  let killed = false;
+  const timeout = await runClaudePrompt({
+    prompt: "hello",
+    cli: { available: true, command: "fake-claude" },
+    config: { claudeRunnerTimeoutMs: 30 },
+    spawnImpl: fakeSpawnImpl("timeout", { delayMs: 100000 }),
+    killImpl(child) {
+      killed = true;
+      child.kill();
+    },
+  });
+  assert.equal(killed, true);
+  assert.equal(timeout.ok, false);
+  assert.equal(timeout.timedOut, true);
+  assert.equal(timeout.resultSubtype, "timeout");
 });

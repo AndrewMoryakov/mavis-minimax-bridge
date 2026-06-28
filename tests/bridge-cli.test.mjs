@@ -1435,10 +1435,35 @@ test("config accepts claudeCli and doctor reports configured Claude shim", (t) =
   const shown = ok(runBridge(dir, ["config", "show"]));
   assert.equal(shown.config.claudeCli, cliPath);
 
+  ok(runBridge(dir, ["config", "set", "--key", "claudeCliSearchTimeoutMs", "--value", "2500"]));
+  ok(runBridge(dir, ["config", "set", "--key", "claudeRunnerTimeoutMs", "--value", "65000"]));
+  ok(runBridge(dir, ["config", "set", "--key", "claudeRequireAvailable", "--value", "true"]));
+  ok(runBridge(dir, ["config", "set", "--key", "claudeModel", "--value", "\"claude-sonnet-4\""]));
+  ok(runBridge(dir, ["config", "set", "--key", "claudeMaxTurns", "--value", "2"]));
+  ok(runBridge(dir, ["config", "set", "--key", "claudeMaxBudgetUsd", "--value", "0.5"]));
+  ok(runBridge(dir, ["config", "set", "--key", "claudePermissionMode", "--value", "\"plan\""]));
+
+  const withClaudeConfig = ok(runBridge(dir, ["config", "show"]));
+  assert.equal(withClaudeConfig.config.claudeCliSearchTimeoutMs, 2500);
+  assert.equal(withClaudeConfig.config.claudeRunnerTimeoutMs, 65000);
+  assert.equal(withClaudeConfig.config.claudeRequireAvailable, true);
+  assert.equal(withClaudeConfig.config.claudeModel, "claude-sonnet-4");
+  assert.equal(withClaudeConfig.config.claudeMaxTurns, 2);
+  assert.equal(withClaudeConfig.config.claudeMaxBudgetUsd, 0.5);
+  assert.equal(withClaudeConfig.config.claudePermissionMode, "plan");
+
   const report = ok(runBridge(dir, ["doctor"]));
   assert.equal(report.claude.available, true);
+  assert.equal(report.claude.found, true);
+  assert.equal(report.claude.spawnable, true);
   assert.equal(report.claude.kind, "cmd-shim");
   assert.equal(report.claude.command, cliPath);
+
+  const missingCli = path.join(dir, "missing", "claude.cmd");
+  ok(runBridge(dir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(missingCli)]));
+  const strictReport = ok(runBridge(dir, ["doctor"]));
+  assert.equal(strictReport.verdict, "fail");
+  assert.equal(strictReport.claude.spawnable, false);
 
   const reset = ok(runBridge(dir, ["config", "set", "--key", "claudeCli", "--value", "\"\""]));
   assert.equal(reset.config.claudeCli, null);
