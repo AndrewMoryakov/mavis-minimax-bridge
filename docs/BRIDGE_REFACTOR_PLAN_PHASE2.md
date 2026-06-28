@@ -1,9 +1,9 @@
 # Bridge Refactor Plan — Phase 2
 
-Status: complete. Patches 6–7, the shared-text and HTTP-JSON transport
-extractions, and the review-driven coverage fixes all landed. Remaining
-candidates (mvs-client Tier-2, codex-runner) are judgment-call clusters left
-for a future focused pass; everything else stays in `bridge.mjs` by design.
+Status: complete. Patches 6–7, the shared-text, HTTP-JSON transport, and Mavis
+client extractions, plus the review-driven coverage fixes, all landed. The only
+remaining candidate is `codex-runner` (a judgment-call cluster left for a future
+focused pass); everything else stays in `bridge.mjs` by design.
 
 Continues `BRIDGE_REFACTOR_PLAN.md`, which is implemented through Patch 5 plus a
 follow-up `path-security` extraction. Phase 1 moved leaf helpers into `lib/`
@@ -52,7 +52,7 @@ are clean; the orchestrator on top of them is not.
 | verifier runner (`verifierArgs`, `validateForwardedVerifierArgs`, `resolveVerifierPath`, `verifierEnv`, `runVerifierProcess`) | ~3885–4060 | self-contained process runner — BUT `runVerifierProcess` pulls in `summarizeStream`/`killProcessTree`/`verifierMax*` consts/`now`, and `summarizeStream` needs `textDigest`/`textSummary` which are NOT verifier-local | take second (Patch 7, after a shared-summarizer prep) |
 | `buildAskSourceContext` | ~653–769 | NOT a leaf: calls `runGit` (~403), `safeGitText` (~411), `appendBounded` (~415), `listUntrackedPaths` (~437), `readUntrackedSnippet` (~447), `relativeBridgePath` (~481), `argValue`/`argValues` (~242), reads the `config` singleton (`askSourceContextMode` ~654, `askMaxSourceContextChars` ~662) | keep in `bridge.mjs` for now (Patch 6b, optional later) |
 | HTTP-JSON transport (`fetchJson`, `fetchJsonWithTimeout`) | ~327–353 | pure (global fetch + AbortController); also used by opencode `/config` inspection | done — `lib/http-json.mjs` |
-| mvs-client Tier-2 (session helpers, `fetchMavisJson`, `verifyMavisSession`, `createSession`, `readUsage`, `mavisCli`) | ~720–1071 | read-only `config` (inject by reference — safe, mutated in place) + session-id validators | extractable via `makeMvsClient`, but a multi-function judgment call, not a leaf |
+| mvs-client Tier-2 (session helpers, `fetchMavisJson`, `verifyMavisSession`, `createSession`, `readUsage`, `mavisCli`, validators) | ~720–1071 | read-only `config` (injected by reference — safe, mutated in place) | done — `lib/mvs-client.mjs` (`makeMvsClient({ config, runJson })`) |
 | `sendPrompt` | ~777 | drags the optimization subsystem (`addOptimizationContext`/`requiredModel`/`modelSpec`) | keep in `bridge.mjs` |
 | codex-runner (`runCodexExecTurn`, `codexWorkspaceForMode`, …) | ~2805–3526 | large, mixed (process spawn + workspace + Duet step glue) | defer on size/coupling grounds (see note) |
 
@@ -208,22 +208,20 @@ Checks:
   `fetchJsonWithTimeout` (global fetch + AbortController, no config). Named for
   transport, not mvs, because the opencode `/config` inspection also uses
   `fetchJson`. Tested against a real `node:http` server.
+- `lib/mvs-client.mjs` — extracted the Mavis client Tier-2 via
+  `makeMvsClient({ config, runJson })`. The original cycle rationale was wrong:
+  these functions only *read* `config`, and `config` is mutated in place
+  (`writeConfig` deletes keys + `Object.assign`s, never reassigns), so
+  by-reference injection keeps reads live with no `config -> client -> config`
+  cycle (verified at runtime). Moved: the session-id validators, session-URL
+  helpers, `fetchMavisJson`, `verifyMavisSession`, `createSession`, `readUsage`,
+  `mavisCli`, plus standalone pure `mvsBase`/`usageSummary`. `sendPrompt` stays
+  in `bridge.mjs` (optimization-coupled) and imports `messageUrl` from the
+  module; the four mvs command handlers and the arg-parsing adapters
+  `mvsDaemonPort`/`mvsSession` stay and call through the client.
 
 ## Deferred (separate pass, each needs its own focused plan)
 
-- `lib/mvs-client.mjs` — **the original cycle rationale was wrong.** These
-  functions only *read* `config`, never write it, and `config` is mutated in
-  place (Phase-1 note: `writeConfig` mutates the existing object), so injecting
-  `config` by reference keeps reads live with no `config -> client -> config`
-  cycle. The real disqualifier for a mechanical move is `sendPrompt` (~777),
-  which drags in the optimization subsystem
-  (`addOptimizationContext -> optimizationContext -> requiredModel/roleOutputCap/
-  modelSpec`). A "Tier-2" cluster — the session-URL helpers, `fetchMavisJson`,
-  `verifyMavisSession`, `createSession`, `readUsage`/`mavisCli`, plus the
-  session-id validators `assertMvsSessionID`/`assertNotDeniedSession`/
-  `isDeniedSession` — is extractable via `makeMvsClient({ config, ... })` with
-  config-by-ref, but it is a multi-function judgment call, not a leaf. Keep
-  `sendPrompt` in `bridge.mjs`.
 - `lib/codex-runner.mjs` — defer on size/mixed-concerns grounds (above), not on
   "currently editing".
 
@@ -250,7 +248,8 @@ regressions.
 5. Multi-agent review of the committed extractions; closed the MEDIUM verifier
    coverage gaps and a dead bind it surfaced.
 6. `lib/http-json.mjs` — extracted the pure transport leaves.
-7. Natural finish line: the remaining candidates (mvs-client Tier-2,
-   `codex-runner`) are judgment-call clusters, not leaves, and everything else
-   is code both plans say stays in `bridge.mjs`. Surface Tier-2-vs-stop to the
-   user rather than hunting for more to extract.
+7. `lib/http-json.mjs` — extracted the pure transport leaves.
+8. `lib/mvs-client.mjs` — extracted the Mavis client Tier-2 (config-by-ref).
+9. Finish line: the only remaining candidate is `codex-runner` (judgment-call
+   cluster, needs its own brainstorm); everything else is code both plans say
+   stays in `bridge.mjs`.
