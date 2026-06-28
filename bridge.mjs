@@ -30,7 +30,7 @@ const duetMaxEntryChars = 20000;
 const packageName = "mavis-minimax-bridge";
 const sourceIncludeMaxFiles = 80;
 const sourceIncludeMaxDirs = 160;
-const { shouldSkipSourceContextPath, includedSourceFiles } = makeSourceContext({
+const { includedSourceFiles } = makeSourceContext({
   bridgeDir,
   paths,
   limits: { maxFiles: sourceIncludeMaxFiles, maxDirs: sourceIncludeMaxDirs },

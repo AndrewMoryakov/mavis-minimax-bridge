@@ -111,3 +111,68 @@ test("runVerifierProcess runs a script and reports an ok result", async (t) => {
   assert.equal(result.exitCode, 0);
   assert.equal(result.stdout.text, "VERIFIER_OK");
 });
+
+test("summarizeStream caps output at maxStreamBytes and flags truncation", (t) => {
+  const small = makeVerifier({
+    bridgeDir: sandbox(t),
+    now: () => "2026-06-28T00:00:00.000Z",
+    limits: { ...LIMITS, maxStreamBytes: 8 },
+  });
+  const buffer = Buffer.from("abcdefghij"); // 10 bytes > 8-byte cap
+
+  const raw = small.summarizeStream(buffer, true);
+  assert.equal(raw.truncated, true);
+  assert.equal(raw.text.length, 8);
+  assert.equal(raw.text, "abcdefgh");
+  assert.equal(raw.bytes, 10);
+
+  const under = small.summarizeStream(Buffer.from("abc"), true);
+  assert.equal(under.truncated, false);
+  assert.equal(under.text, "abc");
+});
+
+test("verifierEnv forwards allowlisted variables", () => {
+  assert.ok(process.env.PATH, "test precondition: PATH is set");
+  const env = verifierEnv();
+  assert.equal(env.PATH, process.env.PATH);
+  assert.notEqual(env.PATH, "");
+});
+
+test("runVerifierProcess reports a non-zero exit as fail", async (t) => {
+  const dir = sandbox(t);
+  const file = path.join(dir, "fail.mjs");
+  fs.writeFileSync(file, "process.exit(1)\n", "utf8");
+  const v = verifier(dir);
+
+  const result = await v.runVerifierProcess(v.resolveVerifierPath(file), [], 30, true);
+  assert.equal(result.status, "fail");
+  assert.equal(result.exitCode, 1);
+});
+
+test("runVerifierProcess kills and reports a script that exceeds the timeout", async (t) => {
+  const dir = sandbox(t);
+  const file = path.join(dir, "sleep.mjs");
+  fs.writeFileSync(file, "setTimeout(() => process.exit(0), 60000)\n", "utf8");
+  const v = verifier(dir);
+
+  const result = await v.runVerifierProcess(v.resolveVerifierPath(file), [], 1, true);
+  assert.equal(result.status, "timeout");
+  assert.equal(result.signal, "timeout");
+  assert.equal(result.exitCode, null);
+});
+
+test("runVerifierProcess isolates the child from HOME and NODE_OPTIONS", async (t) => {
+  const dir = sandbox(t);
+  const file = path.join(dir, "env.mjs");
+  fs.writeFileSync(
+    file,
+    "process.stdout.write(JSON.stringify({ home: process.env.HOME, nodeOptions: process.env.NODE_OPTIONS }))\n",
+    "utf8",
+  );
+  const v = verifier(dir);
+
+  const result = await v.runVerifierProcess(v.resolveVerifierPath(file), [], 30, true);
+  const seen = JSON.parse(result.stdout.text);
+  assert.equal(seen.home, "");
+  assert.equal(seen.nodeOptions, "");
+});
