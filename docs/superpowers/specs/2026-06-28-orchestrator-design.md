@@ -1,10 +1,12 @@
 # Orchestrator Layer — Design Spec
 
-Date: 2026-06-28. Status: **approved with required changes (revised) — design only,
-not yet planned or implemented.** This revision folds in a review pass: a
-write-ahead ledger, a separate compact state file, an explicit worker-summary
-contract, a codex workspace/apply contract, honest budget semantics, a dedicated
-`orch.lock`, and capability-bounding against summary-borne prompt injection.
+Date: 2026-06-28. Status: **approved for implementation planning — design only, not
+yet implemented.** Two review passes folded in: (1) write-ahead ledger, separate
+compact state, worker-summary chokepoint, codex workspace/apply contract, honest
+budget semantics, dedicated `orch.lock`, capability-bounding against summary-borne
+prompt injection; (2) init-through-WAL, a crash-recovery matrix for unclosed WAL
+steps, bridge-commits-per-codex-turn, realpath target validation (both
+directions), and a local/git-ignored runtime-files contract.
 
 ## Goal
 
@@ -66,17 +68,23 @@ orchestrate never block each other), atomic-write, and the budget machinery.
 
 ## 2. Data flow and state
 
-**Start:** `orchestrate start --task <file>` creates `orch-state.json` (task,
-participants, budgets, `status=running`, `step=0`) and `orch-journal.md` under the
-lock. Each participant is given a session: MiniMax a native opencode session
+**Start (also through the WAL):** `orchestrate start --task <file> --target <dir>`
+runs the same write-ahead sequence as every step, so the ledger alone fully
+describes the task from `seq 0`:
+`init-intent (task, participants, budgets, target) → write journal header →
+project initial state → init-applied`.
+Each participant is given a session: MiniMax a native opencode session
 (`createSession` → `mvs_…`); codex a logical session id for bridge-managed memory.
+The session ids are part of the init record, so `resume` reconstructs the whole
+task — task text, participants, budgets, target, sessions — from the ledger with
+no reliance on `orch-state.json` having survived.
 
 **Loop (the orchestrator goes first each cycle — it is the router):**
 
 ```
 1. Bridge → orchestrator: the new result-summary of the prior step
    (the orchestrator remembers the rest — persistent session).
-   Step 0: just the task, empty ledger.
+   Step 0: just the task (the ledger holds only the init records, no step results yet).
 2. Orchestrator (LLM) → strict decision: {action: run|done|escalate, worker, subtask, note}
 3a. run → append a ledger INTENT record (about to run worker W with subtask S);
     worker-runner gives the worker {subtask + goal-as-background};
@@ -98,8 +106,10 @@ per step, so it needs a real write-ahead log.)
 
 **State files:**
 - `orch-ledger.jsonl` — **append-only WAL, the durable source of truth.** One line
-  per event: `{seq, step, kind: 'intent'|'result'|'applied'|'decision', worker?,
-  subtask?, summaryRef?, status?, usage?, ts}`. Never rewritten.
+  per event: `{seq, step, kind: 'init-intent'|'init-applied'|'intent'|'result'|'applied'|'decision', worker?,
+  subtask?, summaryRef?, status?, usage?, payload?, ts}`. The `init-*` pair carries
+  the task text, participants, budgets, target, and session ids in `payload`. Never
+  rewritten.
 - `orch-state.json` — a **compact projection** derived from the ledger:
   `{ task, status, step, participants:[{id,kind,transport,sessionId,memory}],
   budget:{maxSteps,maxTokens,spent}, lastDecision }`. Small, rewritten atomically;
@@ -107,11 +117,36 @@ per step, so it needs a real write-ahead log.)
 - `orch-journal.md` — human-readable trail (decisions + notes + summaries),
   append-only, for "под ключ" observation.
 
+**Runtime files (local, never committed or shipped).** All orchestrator runtime
+state is local-only and must be git-ignored and documented in the runtime-files
+contract: `orch-ledger.jsonl`, `orch-state.json`, `orch-journal.md`, `orch.lock`,
+`orch-artifacts/` (raw worker output), and any per-task workspaces/worktrees. Add
+the patterns to `.gitignore` (e.g. `/orch-*`, `/orch-artifacts/`) alongside the
+existing duet runtime entries, and to `docs/RUNTIME_FILES.md`. (Note: the project
+already has the audit's P3-2 packaging gap — no `files` whitelist — so these must
+be ignored to avoid leaking task content into `npm pack`.)
+
 **Durability invariant:** the `orch-ledger.jsonl` WAL is the source of truth; the
 compact `orch-state.json` and the orchestrator's live LLM session are both
 **projections** of it. After a crash, `orchestrate resume` rebuilds both the state
-and the orchestrator's context by replaying the ledger (re-deriving from the last
-APPLIED record). `orchestrate status` reads the same projection.
+and the orchestrator's context by replaying the ledger. `orchestrate status` reads
+the same projection.
+
+**Crash recovery (resume).** Resume replays the WAL and reconciles the *tail* — the
+records after the last cleanly-closed step. Guiding principle: **never auto-rerun
+an ambiguous spent call; complete what is already durable; surface the unknown to
+the orchestrator.**
+
+| Ledger tail | Meaning | Resume action |
+|-------------|---------|---------------|
+| `init-intent`, no `init-applied` | setup didn't finish; **no worker tokens spent** | re-run init idempotently (recreate participant sessions) |
+| step `intent`, no `result` | the worker call **may have run and spent tokens**; outcome unknown | **do NOT re-run.** Append `result{status:'interrupted'}` + `applied`; feed that as the step summary so the **orchestrator decides** (redo as a fresh step, or move on) |
+| `result`, no `applied` | work is durable; only the projection/close didn't finish | re-project state and append `applied` (idempotent completion) — **no re-run, no extra spend** |
+| journal/artifact ahead of `state` | `state` is only a projection | re-derive `state` from the ledger (the ledger, not the journal, is authority) |
+
+Because every spend-bearing action is bracketed by `intent`/`result`, a crash can
+leave at most one step ambiguous, and that one is escalated to the orchestrator
+rather than silently retried.
 
 ## 3. Decision protocol
 
@@ -227,16 +262,25 @@ Isolation alone is not enough — the spec must say **how codex's changes reach 
 real project**, or work silently strands in scratch.
 
 The orchestrator takes an explicit **`--target <project-dir>`** (the real codebase
-to act on), validated `≠ bridgeDir` (closes audit P2-2; codex can never touch the
-bridge's own sources). The default, MVP contract:
+to act on). **Validation (realpath, both directions, closes audit P2-2):** after
+`realpath`-resolving both, reject if `target === bridgeDir`, if `target` is inside
+`bridgeDir`, OR if `bridgeDir` is inside `target` — any of which would let codex
+reach the bridge's own sources. Reuse `realpathOrResolve` + `isPathInsideRoot`
+from `lib/path-security` for the containment checks (both orientations). The
+default, MVP contract:
 
 - **Git target (recommended): a per-task `git worktree` of `--target` on a task
-  branch.** Codex runs there in `workspace-write`; its edits ARE real commits on
-  the branch. This gives (a) durable per-turn memory (the worktree persists across
-  turns), (b) isolation from both the bridge and the user's working tree, and
-  (c) a clean apply/review/rollback path: the human inspects the branch and merges
-  (or discards) — the "apply" is the merge, no bespoke patch step. The branch/
-  worktree is recorded in the ledger and reported by `orchestrate status`.
+  branch.** Codex runs there in `workspace-write` and just edits files. **The
+  bridge — not codex — commits the worktree after each codex turn** (once the
+  worker-summary is recorded), so each step is one reviewable commit and the
+  commit sha becomes the step's artifact reference in the ledger. This gives
+  (a) durable per-turn memory (the committed worktree persists across turns),
+  (b) isolation from both the bridge and the user's working tree, and (c) a clean
+  apply/review/rollback path: the human inspects the branch and merges or discards
+  — the "apply" is the merge, no bespoke patch step. The branch/worktree is
+  recorded in the ledger and reported by `orchestrate status`. (Alternative
+  considered and rejected for the MVP: a dirty no-auto-commit worktree — it loses
+  per-step artifacts/rollback granularity and makes "real commits" untrue.)
 - **Non-git target (fallback): copy-in + patch-export.** Copy `--target` into a
   per-task workspace, codex edits there, and on `done` the orchestrator emits a
   unified diff for the human to apply. Explicit, never auto-applied.
