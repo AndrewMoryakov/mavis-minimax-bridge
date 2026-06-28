@@ -103,7 +103,235 @@ Useful flags to support by config:
 - `--disallowedTools`
 - `--resume` (deferred until session lifecycle is designed)
 
-## Implementation Plan
+## Execution Roadmap
+
+Use these stages as the actual delivery order. Each stage should be a small
+reviewable change. Do not start a later stage until the previous stage's
+definition of done is met.
+
+### Stage 0: Baseline And Fixtures
+
+Goal: make future Claude work measurable without touching live Claude Code.
+
+Files:
+
+- `docs/CLAUDE_CODE_ADAPTER_PLAN.md`
+- `tests/fixtures/` or `tests/helpers/`
+- `tests/lib-claude-code.test.mjs` (new, can start empty or with resolver tests)
+
+Work:
+
+- Add representative Claude stream-json fixture lines.
+- Add a fake Claude CLI script that can emit success, error, stderr, malformed
+  JSON, timeout, and control-request scenarios.
+- Keep the real `claude` command out of CI tests.
+
+Done when:
+
+- Fake CLI can be invoked by tests.
+- `npm run test:release` remains green.
+- No bridge runtime behavior changes.
+
+### Stage 1: Claude Resolver And Doctor-Only Diagnostics
+
+Goal: detect Claude Code safely, especially on Windows.
+
+Files:
+
+- `lib/claude-code.mjs` (new)
+- `lib/config-core.mjs`
+- `bridge.mjs`
+- `tests/lib-claude-code.test.mjs`
+- `tests/bridge-cli.test.mjs`
+
+Work:
+
+- Add config fields for Claude, but do not run model turns.
+- Implement `resolveClaudeCli()`.
+- Detect executable, `.cmd/.bat`, npm shim, PowerShell function/alias, and
+  missing command.
+- Extend `doctor` with Claude availability and remediation.
+
+Done when:
+
+- `doctor` reports Claude status without spending tokens.
+- Config validation accepts Claude keys.
+- Tests cover missing CLI, configured path, path with spaces, `.cmd`, and
+  PowerShell function detection.
+
+### Stage 2: Stateless No-Tools Claude Runner
+
+Goal: run one bounded Claude Code prompt safely outside Duet.
+
+Files:
+
+- `lib/claude-code.mjs`
+- `tests/lib-claude-code.test.mjs`
+
+Work:
+
+- Build Claude argv for MVP-A.
+- Parse stream-json stdout.
+- Collect answer, usage, cost, model, result subtype, stop reason, duration,
+  permission denials, model usage, and rate-limit events.
+- Fail fast on `control_request` instead of hanging.
+- Enforce timeout and terminate the process tree.
+
+Done when:
+
+- Fake success returns a normalized result.
+- Fake `control_request` returns a clear failure result.
+- Timeout, non-zero exit, malformed JSON, stderr, and budget/max-turn errors are
+  covered by tests.
+- Still no Duet behavior changes.
+
+### Stage 3: Claude Step Dry-Run
+
+Goal: show what a Claude duet step would do, without calling Claude.
+
+Files:
+
+- `bridge.mjs`
+- `lib/claude-code.mjs`
+- `tests/bridge-cli.test.mjs`
+
+Work:
+
+- Allow `--agent claude` for `duet step --dry-run` only.
+- Add Claude-specific prompt construction.
+- Report CLI diagnostics, model, permission policy, budget, token estimate, and
+  tool-execution risk.
+- Do not add `--agents`.
+- Do not change `duet loop`.
+
+Done when:
+
+- `duet step --agent claude --dry-run` is local-only and green in tests.
+- Existing `codex|minimax` dry-run/live tests are unchanged.
+- `duet loop` still only supports the existing two-agent relay.
+
+### Stage 4: Claude Step Live
+
+Goal: run one explicit Claude step and apply its handoff.
+
+Files:
+
+- `bridge.mjs`
+- `lib/claude-code.mjs`
+- `tests/bridge-cli.test.mjs`
+
+Work:
+
+- Enable `duet step --agent claude --yes`.
+- Require explicit token-spending approval.
+- Write pending/applied handoff files through existing hardened `duet pass`.
+- Record Claude run details in ledger/outbox.
+- Preserve the rule that `--yes` is not tool approval.
+
+Done when:
+
+- Fake Claude live step can pass baton manually.
+- Ledger includes Claude usage/cost/result metadata.
+- Existing Codex and MiniMax live step behavior does not regress.
+
+### Stage 5: Reports And Token Stats
+
+Goal: make Claude costs visible.
+
+Files:
+
+- `bridge.mjs`
+- `tests/bridge-cli.test.mjs`
+- docs as needed
+
+Work:
+
+- Update `duet report` to summarize Claude steps.
+- Decide and implement whether `token-stats --ledger` includes duet steps.
+- Show cost/cache/usage without leaking raw prompt or handoff text.
+
+Done when:
+
+- `duet report` shows Claude provider/model/cost/tokens.
+- Redaction behavior remains intact.
+- Tests cover mixed Codex/Claude/MiniMax report data where applicable.
+
+### Stage 6: Participant Registry Refactor
+
+Goal: remove the binary `codex|minimax` assumption.
+
+Files:
+
+- `bridge.mjs`
+- possibly new `lib/duet-agents.mjs`
+- `tests/bridge-cli.test.mjs`
+- docs
+
+Work:
+
+- Add persisted `state.agents`.
+- Replace `nextDuetAgent(agent)` with `nextDuetAgent(state, agent)`.
+- Separate `--agents` from `--require-agents`.
+- Add per-agent counts and limits.
+- Keep backward compatibility for old state files with no `agents` field.
+
+Done when:
+
+- Existing two-agent relays still work.
+- `codex,claude` and `codex,minimax` route correctly in dry-run.
+- No hidden fallback sends `codex -> minimax` inside a `codex,claude` relay.
+
+### Stage 7: Multi-Agent Claude Relay
+
+Goal: enable real `codex,claude` and optional `codex,minimax,claude` loops.
+
+Files:
+
+- `bridge.mjs`
+- tests
+- docs and skills
+
+Work:
+
+- Enable `duet start --agents codex,claude`.
+- Enable `duet loop` over arbitrary registered agents.
+- Add per-agent loop limits and report counts.
+- Update user-facing commands and skills.
+
+Done when:
+
+- `duet start --agents codex,claude` prints correct dry-run/live/report
+  commands.
+- Fake loop over `codex,claude` passes.
+- Fake loop over three agents passes or is explicitly deferred.
+
+### Stage 8: Bidirectional Claude Mode
+
+Goal: support Claude tool permissions and user questions safely.
+
+Files:
+
+- `lib/claude-code.mjs`
+- `bridge.mjs`
+- tests
+- docs
+
+Work:
+
+- Keep stdin open for the step/session.
+- Maintain pending control requests.
+- Send `control_response`.
+- Support `AskUserQuestion`.
+- Add audited tool approval policy.
+- Support interrupt/cleanup.
+
+Done when:
+
+- Stateful fake CLI can request approval, receive allow/deny, and complete.
+- Tool requests are logged and visible.
+- No command/file-edit approval is implied by `--yes`.
+
+## Detailed Phase Notes
 
 ### Phase 1: Adapter Skeleton
 
