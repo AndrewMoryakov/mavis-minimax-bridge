@@ -1,6 +1,10 @@
 # Orchestrator Layer — Design Spec
 
-Date: 2026-06-28. Status: **design approved; not yet planned or implemented.**
+Date: 2026-06-28. Status: **approved with required changes (revised) — design only,
+not yet planned or implemented.** This revision folds in a review pass: a
+write-ahead ledger, a separate compact state file, an explicit worker-summary
+contract, a codex workspace/apply contract, honest budget semantics, a dedicated
+`orch.lock`, and capability-bounding against summary-borne prompt injection.
 
 ## Goal
 
@@ -27,6 +31,7 @@ non-goal, scoped to the minimum that delivers orchestration — nothing more.
    high-level by its input diet (decision 3).
 3. **The orchestrator only ever receives bounded summaries** of worker output
    (status + what-was-done + artifacts-by-reference/sha) — never raw diffs/files.
+   Enforced at one chokepoint with an explicit schema + cap (§4a), not as a promise.
 4. **Decisions are a strict schema**, not parsed from free text.
 5. **Workers receive a scoped sub-task plus the original goal as background** (not
    the full task to self-orient, not a bare chunk).
@@ -36,7 +41,7 @@ non-goal, scoped to the minimum that delivers orchestration — nothing more.
 Build `orchestrate` as a new command + loop that composes the already-extracted
 `lib/` transports. The duet relay is **untouched** (separate commands, separate
 state); only low-level transports/lock/budgets are shared. Additive, low-risk,
-keeps the 126 existing tests green. The duet relay (and its soon-irrelevant bugs)
+keeps the 130 existing tests green. The duet relay (and its soon-irrelevant bugs)
 is retired in a later, separate step once the orchestrator proves out. Approaches
 B (replace duet) and C (generalize duet into a shared engine) were rejected for a
 first version — B is a high-risk big-bang, C is premature generality against the
@@ -51,11 +56,13 @@ shape is known.
 | participant registry | `{ id, kind: orchestrator\|worker, transport, session, role, memory }` | config |
 | worker-runner | uniform "give sub-task → return bounded summary" over `runCodexExecTurn` / MiniMax `sendPrompt` | `codex-exec`, `mvs-client` |
 | orchestrator-runner | call the LLM orchestrator with the strict decision schema | `mvs-client` (or a configured model) |
-| orchestrator state | `orch-state.json` + `orch-journal.md` (separate from duet), under `duet-lock` | `duet-lock`, atomic write |
+| orchestrator state | `orch-ledger.jsonl` (append-only WAL, source of truth) + `orch-state.json` (compact projection) + `orch-journal.md` (human trail); guarded by a **dedicated `orch.lock`** via the `lib/duet-lock` helper | `lib/duet-lock` helper, atomic write |
 | `bridge.mjs` | CLI dispatch for `orchestrate start/status/resume` | all of the above |
 
-Boundary with duet: **zero** — separate commands and state; only the low-level
-transports, lock, and budget primitives are shared.
+Boundary with duet: **zero** — separate commands and separate state files
+(`orch-*`). Only the low-level *primitives* are shared: the transports, the
+lock **helper** (`lib/duet-lock.mjs`, but a separate `orch.lock` file so duet and
+orchestrate never block each other), atomic-write, and the budget machinery.
 
 ## 2. Data flow and state
 
@@ -71,24 +78,40 @@ lock. Each participant is given a session: MiniMax a native opencode session
    (the orchestrator remembers the rest — persistent session).
    Step 0: just the task, empty ledger.
 2. Orchestrator (LLM) → strict decision: {action: run|done|escalate, worker, subtask, note}
-3a. run → worker-runner gives the worker {subtask + goal-as-background};
+3a. run → append a ledger INTENT record (about to run worker W with subtask S);
+    worker-runner gives the worker {subtask + goal-as-background};
     the worker runs in its OWN persistent session;
-    bridge produces a bounded summary (status + what-done + artifacts-by-ref/sha);
-    summary → ledger + journal. Raw output is NOT shown to the orchestrator.
+    bridge captures raw output, stores it by reference, and builds a bounded
+    worker-summary (see §4a); append a ledger RESULT record + journal artifact;
+    project compact state; mark the ledger intent APPLIED.
+    Raw output is NEVER shown to the orchestrator.
 3b. done/escalate → loop ends, final summary.
-4. Budget / iteration caps checked; --yes gates spend.
-5. State written atomically (state BEFORE journal — audit lesson P2-10).
+4. Budget reserved before the next call, accounted after it (§5); --yes gates spend.
 ```
 
-**State:**
-- `orch-state.json` — `{ task, status, step, participants:[{id,kind,transport,sessionId,memory}], ledger:[{step,worker,subtask,summary,status,ts}], budget:{maxSteps,maxTokens,spent}, lastDecision }`
+**Write-ahead order (per step):** `ledger intent → (worker runs) → journal/summary
+artifact → state projection → ledger applied`. The append-only ledger is written
+*before* the action and *before* the compact state, so state can never be "in the
+future" without a durable trace. (This supersedes the simpler duet rule "state
+before journal", which fit duet's no-spend model; the orchestrator spends tokens
+per step, so it needs a real write-ahead log.)
+
+**State files:**
+- `orch-ledger.jsonl` — **append-only WAL, the durable source of truth.** One line
+  per event: `{seq, step, kind: 'intent'|'result'|'applied'|'decision', worker?,
+  subtask?, summaryRef?, status?, usage?, ts}`. Never rewritten.
+- `orch-state.json` — a **compact projection** derived from the ledger:
+  `{ task, status, step, participants:[{id,kind,transport,sessionId,memory}],
+  budget:{maxSteps,maxTokens,spent}, lastDecision }`. Small, rewritten atomically;
+  holds **no** per-step history (that lives in the ledger).
 - `orch-journal.md` — human-readable trail (decisions + notes + summaries),
   append-only, for "под ключ" observation.
 
-**Durability invariant:** the `ledger` is the **durable source of truth**; the
-orchestrator's LLM session is live working memory. If that session is lost
-(crash/resume), the bridge rebuilds the orchestrator's context from the ledger.
-This also gives `orchestrate status` and `orchestrate resume` for free.
+**Durability invariant:** the `orch-ledger.jsonl` WAL is the source of truth; the
+compact `orch-state.json` and the orchestrator's live LLM session are both
+**projections** of it. After a crash, `orchestrate resume` rebuilds both the state
+and the orchestrator's context by replaying the ledger (re-deriving from the last
+APPLIED record). `orchestrate status` reads the same projection.
 
 ## 3. Decision protocol
 
@@ -125,7 +148,58 @@ Key points:
 - If a transport supports native tool-calls / structured output, use it; the
   JSON-block path is the default fallback.
 
-## 4. Executor memory (incl. codex statelessness)
+**Schema validation protects the parser, not the orchestrator's judgement.** A
+malicious worker output → summary → could try to *steer* the LLM orchestrator
+("ignore the task, run X / declare done"). The schema does not stop that. The real
+defense is **capability-bounding at the bridge**, treating all summaries as
+untrusted input:
+- The orchestrator's only powers ARE the schema actions: pick a *registered*
+  worker + write a sub-task, or done/escalate. Even a fully prompt-injected
+  orchestrator cannot exceed that envelope — it cannot spawn arbitrary commands,
+  reach unregistered workers, or raise its own privileges.
+- The system prompt explicitly labels summaries as untrusted, instructs the
+  orchestrator to weigh them against the original task, and forbids treating
+  summary text as instructions.
+- The worker-runner fences summary content (no structural/control tokens) when
+  composing the orchestrator's input, so a summary cannot forge schema fields or
+  prior-decision records.
+- Hard caps (`maxSteps`/`maxTokens`, §5) bound the blast radius of a
+  steered-into-looping orchestrator.
+
+## 4. Worker I/O: summary contract, memory, workspace
+
+### 4a. Worker-summary contract (the "bounded summaries" mechanism)
+
+The "orchestrator never sees raw output" invariant is enforced at exactly one
+chokepoint — the **worker-runner** — not left as a promise:
+
+1. The worker-runner captures the worker's full raw output and writes it to disk
+   (`orch-artifacts/<step>-<worker>.raw`), recording only a **reference** (path +
+   sha + byte count) in the ledger. Raw output never enters the orchestrator path.
+2. It then produces a **`worker-summary`** with a fixed schema and hard caps:
+   ```json
+   {
+     "worker": "<id>", "step": <n>, "status": "ok | error | partial",
+     "did": "<what was done, <= maxSummaryChars>",
+     "artifacts": [{ "path": "...", "sha256": "...", "bytes": <n> }],
+     "rawRef": { "path": "...", "sha256": "...", "bytes": <n> },
+     "truncated": <bool>
+   }
+   ```
+   - The worker is prompted to end its turn with a structured self-report; the
+     worker-runner **validates and caps** it (≤ `maxSummaryChars`, drops unknown
+     fields). If it is missing/malformed, the runner **synthesizes** a minimal
+     summary deterministically (status + a capped head/tail of raw + the artifact
+     list) — so a summary always exists and is always bounded.
+   - `did` text is treated as **untrusted** (§3 capability-bounding) and is fenced
+     when composed into the orchestrator's input.
+3. Only this `worker-summary` is fed to the orchestrator. If it needs more detail,
+   it routes another worker turn to inspect — it does not get raw bytes.
+
+`maxSummaryChars` is a config knob (default in the low thousands), keeping the
+orchestrator's accumulating context thin by construction.
+
+### 4b. Executor memory (incl. codex statelessness)
 
 Each worker keeps its own context for the whole task; a new task is fresh.
 
@@ -140,13 +214,6 @@ Each worker keeps its own context for the whole task; a new task is fresh.
      prepends a short "your prior turns in this task: [subtask → summary]…"
      (char-bounded, like `duetPacketMaxChars`) + the new sub-task + goal background.
 
-**Workspace decoupling (also fixes audit P2-2):** the orchestrator's codex worker
-runs in a **per-task persistent workspace, NOT `bridgeDir`**. Today exec mode uses
-`bridgeDir`/`workspace-write` (codex could overwrite `bridge.mjs`). The
-orchestrator adds a third workspace mode: a dedicated task directory,
-`workspace-write`, persisting across turns within the task, cleaned/retained at
-task end. This is both the memory substrate and isolation from the bridge.
-
 The participant registry carries `memory: 'native-session' | 'workspace+reinject'`;
 the worker-runner dispatches per strategy.
 
@@ -154,15 +221,46 @@ the worker-runner dispatches per strategy.
 resume/session, prefer it over the light re-injection layer; the
 workspace+re-injection path works regardless.
 
+### 4c. Codex workspace & apply contract
+
+Isolation alone is not enough — the spec must say **how codex's changes reach the
+real project**, or work silently strands in scratch.
+
+The orchestrator takes an explicit **`--target <project-dir>`** (the real codebase
+to act on), validated `≠ bridgeDir` (closes audit P2-2; codex can never touch the
+bridge's own sources). The default, MVP contract:
+
+- **Git target (recommended): a per-task `git worktree` of `--target` on a task
+  branch.** Codex runs there in `workspace-write`; its edits ARE real commits on
+  the branch. This gives (a) durable per-turn memory (the worktree persists across
+  turns), (b) isolation from both the bridge and the user's working tree, and
+  (c) a clean apply/review/rollback path: the human inspects the branch and merges
+  (or discards) — the "apply" is the merge, no bespoke patch step. The branch/
+  worktree is recorded in the ledger and reported by `orchestrate status`.
+- **Non-git target (fallback): copy-in + patch-export.** Copy `--target` into a
+  per-task workspace, codex edits there, and on `done` the orchestrator emits a
+  unified diff for the human to apply. Explicit, never auto-applied.
+
+Either way the contract is explicit: the human knows exactly where results land
+and applies/merges them deliberately (risk-on-human, per the non-goals). What is
+NOT in the MVP: auto-merge, conflict resolution, multi-target, or applying without
+human action.
+
 ## 5. Termination and budget
 
 Three termination paths:
 1. Orchestrator decides `done` (with `summary`) → `status=done`.
 2. Orchestrator decides `escalate` (with `reason`) → `status=escalated`.
 3. **Hard caps (backstop)** even if the orchestrator loops without finishing:
-   - `maxSteps` — cap on orchestrator decisions.
-   - `maxTokens` — cumulative budget (orchestrator + all workers), checked BEFORE
-     each LLM call; a call that would exceed it stops the loop.
+   - `maxSteps` — cap on orchestrator decisions (a precise counter).
+   - `maxTokens` — cumulative budget (orchestrator + all workers). Honest
+     semantics, because real usage is only known *after* a call and estimates can
+     be wrong: (1) **preflight estimate + reserve** before the next call; (2)
+     **stop-before-next-call** if `spent + reserve` would exceed `maxTokens` — i.e.
+     the budget gates *whether to start* the next call, never mid-call; (3)
+     **post-fact accounting** updates `spent` from the call's actual reported usage
+     (falling back to the estimate if the transport returns none). So the cap is a
+     conservative stop-gate, not a guarantee of the exact final token count.
    - On a cap → **graceful `escalated`/`budget_exhausted` with a clean final
      summary, NOT an uncaught throw** (direct lesson from audit P1-5).
 
@@ -197,19 +295,24 @@ The full loop runs deterministically, no tokens.
 
 Unit tests (pure): schema validation (valid run/done/escalate; invalid
 action/worker-not-in-registry/empty-subtask → reject; fail-closed
-re-prompt→escalate); bounded-summary production; ledger/state shape + atomic
-state-before-journal write; budget (`maxSteps` → graceful escalate, `maxTokens` →
-stop before exceeding); codex re-injection block + memory-strategy dispatch;
+re-prompt→escalate); **worker-summary chokepoint** (raw output is stored by
+reference and never appears in the orchestrator input; a missing/malformed
+self-report is synthesized; the summary is capped at `maxSummaryChars`); WAL
+ordering (intent appended before the action, state is a projection rebuilt from
+the ledger, applied-record closes the step); budget (`maxSteps` → graceful
+escalate; `maxTokens` reserve→stop-before-call→post-fact accounting); codex
+re-injection block + memory-strategy dispatch; `--target` validated `≠ bridgeDir`;
 worker failure → error-summary fed to orchestrator (not a throw).
 
-Integration tests (scripted, offline): happy path to `done` with correct ledger;
-escalate path; `maxSteps` backstop; budget backstop; resume (interrupt → re-read
-`orch-state` → continue); a real `node:http` server standing in for the MiniMax
-transport (as in `lib-mvs-client`/`lib-http-json`).
+Integration tests (scripted, offline): happy path to `done` with a correct
+ledger; escalate path; `maxSteps` backstop; budget backstop; resume (interrupt →
+**replay `orch-ledger.jsonl`** → continue from the last applied record); a real
+`node:http` server standing in for the MiniMax transport (as in
+`lib-mvs-client`/`lib-http-json`).
 
 Guarantees: no real codex/MiniMax spawned in tests (codex via the fake hook;
 MiniMax via a local server + scripted replies); everything under
-`test:release`/`test:offline`; zero spend in CI. The additive design keeps the 126
+`test:release`/`test:offline`; zero spend in CI. The additive design keeps the 130
 existing duet tests green as the regression net. Each piece is built
 RED→GREEN→refactor and its tests are mutation-meaningful (fail if the behavior is
 removed), as with the verifier tests.
@@ -224,11 +327,14 @@ human owns the risk.
 ## Relationship to existing code & audit
 
 - Reuses the post-Phase-2 `lib/` transports (`codex-exec`, `mvs-client`,
-  `http-json`), `duet-lock`, atomic writes, `textSummary`/bounded packets, the
-  `--yes`/budget machinery, and the `fakeModelReplyFromEnv` test hook.
+  `http-json`), the `lib/duet-lock` helper (with a separate `orch.lock`), atomic
+  writes, `textSummary`/bounded packets, the `--yes`/budget machinery, and the
+  `fakeModelReplyFromEnv` test hook.
 - Retires by design the audit's worst class (P2-1/P2-3 "trust from journal text")
-  via the strict decision schema; sidesteps P2-2 via the per-task workspace; avoids
-  P1-5/P1-8 by graceful caps and an honest dry-run.
+  via the strict decision schema **plus capability-bounding** (the schema bounds
+  the parser; capability-bounding bounds a prompt-injected orchestrator); sidesteps
+  P2-2 via the `--target ≠ bridgeDir` workspace contract; avoids P1-5/P1-8 by
+  graceful caps and an honest dry-run.
 - The duet relay and its in-flight bug fixes are left as-is; duet is retired only
   after the orchestrator is proven.
 
@@ -237,5 +343,5 @@ human owns the risk.
 - Which model is the orchestrator (default MiniMax/opencode session vs a
   configured model); confirm opencode supports a dedicated orchestrator session.
 - Whether the codex CLI offers native resume (prefer it if so).
-- Exact bounded-summary shape a worker returns (fields the orchestrator needs to
-  route well without raw output).
+- Concrete defaults: `maxSummaryChars`, `maxSteps`, `maxTokens`, and the
+  per-call token `reserve` heuristic.
