@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","session_id":"claude-fixture-happy","model":"claude-sonnet-4","cwd":"/repo"}
+{"type":"user","message":{"content":[{"type":"text","text":"Review Stage 0 fixtures."}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I will inspect the fixture contract."}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_read_1","name":"Read","input":{"file_path":"docs/CLAUDE_CODE_ADAPTER_PLAN.md"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_read_1","content":"Stage 0 excerpt loaded."}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Stage 0 can be implemented with fixtures and fake CLI only."}]}}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":4321,"duration_api_ms":1234,"total_cost_usd":0.0123,"num_turns":1,"session_id":"claude-fixture-happy"}

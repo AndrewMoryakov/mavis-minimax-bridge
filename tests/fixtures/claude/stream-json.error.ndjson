@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"claude-fixture-error","model":"claude-sonnet-4","cwd":"/repo"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I cannot continue within the turn limit."}]}}
+{"type":"result","subtype":"error_max_turns","is_error":true,"duration_ms":900,"duration_api_ms":500,"total_cost_usd":0.0021,"num_turns":3,"session_id":"claude-fixture-error"}

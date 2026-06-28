@@ -1,0 +1,4 @@
+# malformed: 1 valid line, 1 non-JSON, 1 truncated trailing partial
+{"type":"system","subtype":"init","session_id":"claude-fixture-malformed"}
+{not json
+{"type":"assi

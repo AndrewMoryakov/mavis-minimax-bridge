@@ -30,6 +30,9 @@ The target user-facing surface after the registry refactor is:
 
 ```powershell
 node .\bridge.mjs duet start --agents codex,claude --goal .\goal.local.md
+node .\bridge.mjs duet pass --from codex --to claude --handoff .\handoff.local.md
+node .\bridge.mjs duet step --agent claude --dry-run
+node .\bridge.mjs duet step --agent claude --yes
 node .\bridge.mjs duet loop --dry-run
 node .\bridge.mjs duet loop --yes
 node .\bridge.mjs duet report
@@ -89,6 +92,9 @@ Therefore the MVP must choose one of these modes explicitly:
 - **MVP-B: bidirectional runner.** Keep stdin open, maintain pending control
   requests, send `control_response`, support interrupt, and handle
   `AskUserQuestion`. This is more powerful but belongs after the skeleton.
+
+This MVP implements MVP-A only. MVP-B is a follow-up after the stateless runner,
+manual Claude step, and participant registry are proven.
 
 Preserve `session_id` from Claude results for future resume support, but do not
 ship `--resume` as a user-facing config until lifecycle ownership is defined.
@@ -150,6 +156,9 @@ Work:
 - Implement `resolveClaudeCli()`.
 - Detect executable, `.cmd/.bat`, npm shim, PowerShell function/alias, and
   missing command.
+- On Windows, explicitly distinguish PowerShell functions/aliases from
+  spawnable binaries. Function/alias detection should produce a diagnostic or a
+  resolved underlying executable, not a path that `spawn()` cannot run.
 - Extend `doctor` with Claude availability and remediation.
 
 Done when:
@@ -185,7 +194,7 @@ Done when:
   covered by tests.
 - Still no Duet behavior changes.
 
-### Stage 3: Claude Step Dry-Run
+### Stage 3: Claude Manual Step Dry-Run
 
 Goal: show what a Claude duet step would do, without calling Claude.
 
@@ -197,22 +206,32 @@ Files:
 
 Work:
 
-- Allow `--agent claude` for `duet step --dry-run` only.
+- Add the minimal manual-participant plumbing needed for
+  `duet step --agent claude --dry-run`:
+  - `requireDuetAgent()` accepts `claude`.
+  - running duet state may use `baton: "claude"`.
+  - `duet pass --to claude` is accepted for explicit human-directed baton
+    handoff.
+- Keep `duet loop` on the existing two-agent rotation; `nextDuetAgent()` must
+  not auto-schedule Claude yet.
 - Add Claude-specific prompt construction.
-- Report CLI diagnostics, model, permission policy, budget, token estimate, and
-  tool-execution risk.
+- Report CLI diagnostics, model, permission policy, estimated tokens, estimated
+  max spend, hard budget cap, and tool-execution risk.
 - Do not add `--agents`.
-- Do not change `duet loop`.
+- Do not add automatic Claude participation.
 
 Done when:
 
-- `duet step --agent claude --dry-run` is local-only and green in tests.
+- `duet pass --to claude` can set a manual Claude baton.
+- `duet step --agent claude --dry-run` is local-only and green in tests when
+  the baton is Claude.
 - Existing `codex|minimax` dry-run/live tests are unchanged.
 - `duet loop` still only supports the existing two-agent relay.
 
-### Stage 4: Claude Step Live
+### Stage 4: Claude Manual Step Live
 
-Goal: run one explicit Claude step and apply its handoff.
+Goal: run one explicit Claude step when the human has manually handed the baton
+to Claude, then apply Claude's handoff back through the existing duet files.
 
 Files:
 
@@ -224,13 +243,23 @@ Work:
 
 - Enable `duet step --agent claude --yes`.
 - Require explicit token-spending approval.
-- Write pending/applied handoff files through existing hardened `duet pass`.
+- Before spending, print the same cost preview and hard budget cap that dry-run
+  reports.
+- Write pending/applied handoff files through the existing hardened `duet pass`
+  path; Claude does not mutate duet state directly.
+- Require Claude output to choose a valid next recipient from the currently
+  supported manual set (`codex` or `minimax` at this stage). Claude-to-Claude
+  loops remain out of scope.
+- Validate Claude's requested `nextAgent` against that allowlist before
+  creating or applying the handoff. Invalid recipients fail the step without
+  advancing duet state.
 - Record Claude run details in ledger/outbox.
 - Preserve the rule that `--yes` is not tool approval.
 
 Done when:
 
-- Fake Claude live step can pass baton manually.
+- Fake Claude live step can pass the baton manually back to Codex or MiniMax.
+- `duet loop --yes` still does not auto-include Claude.
 - Ledger includes Claude usage/cost/result metadata.
 - Existing Codex and MiniMax live step behavior does not regress.
 
@@ -247,12 +276,18 @@ Files:
 Work:
 
 - Update `duet report` to summarize Claude steps.
-- Decide and implement whether `token-stats --ledger` includes duet steps.
+- Keep `token-stats --ledger` unchanged in this stage. Claude duet usage is
+  reported only by `duet report` until a later, explicit token-stats design
+  decides whether bridge-ledger and duet-ledger usage should be merged.
 - Show cost/cache/usage without leaking raw prompt or handoff text.
 
 Done when:
 
 - `duet report` shows Claude provider/model/cost/tokens.
+- `duet report` includes a visible note that Claude usage is not yet merged into
+  `token-stats --ledger`.
+- `token-stats --ledger` behavior is unchanged and documented as out of scope
+  for this stage.
 - Redaction behavior remains intact.
 - Tests cover mixed Codex/Claude/MiniMax report data where applicable.
 
@@ -331,7 +366,12 @@ Done when:
 - Tool requests are logged and visible.
 - No command/file-edit approval is implied by `--yes`.
 
-## Detailed Phase Notes
+## Historical Reference Phase Notes
+
+The execution roadmap above is the source of truth for delivery order. The
+notes below preserve implementation detail from the earlier plan. They are
+historical reference material only: if they conflict with the staged roadmap,
+the roadmap wins.
 
 ### Phase 1: Adapter Skeleton
 
@@ -493,8 +533,11 @@ Record:
 - `rateLimit`
 
 Update `duet report` so Claude usage appears beside Codex and MiniMax usage.
-Define whether Claude cost/cache data appears only in `duet report`, also in
-`token-stats --ledger`, or both.
+For the staged MVP, keep Claude cost/cache data in `duet report` only. A later
+explicit stats-design pass can decide whether `token-stats --ledger` should
+merge bridge-ledger and duet-ledger usage.
+Until that later pass exists, `duet report` should clearly say that Claude usage
+is not included in `token-stats --ledger`.
 
 ### Phase 6: Tests
 
