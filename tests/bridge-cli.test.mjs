@@ -1382,6 +1382,11 @@ test("safe local commands work in an isolated runtime directory", (t) => {
   const dir = sandbox(t);
 
   assert.equal(runBridge(dir, ["help"]).status, 0);
+  const guide = runBridge(dir, ["guide"]);
+  assert.equal(guide.status, 0);
+  assert.match(guide.stdout, /Start Here/);
+  assert.match(guide.stdout, /help --all/);
+  assert.equal(runBridge(dir, ["help", "--all"]).status, 0);
   assert.equal(ok(runBridge(dir, ["doctor"])).event, "doctor");
   assert.equal(runBridge(dir, ["duet", "help"]).status, 0);
   assert.equal(ok(runBridge(dir, ["config", "show"])).event, "config");

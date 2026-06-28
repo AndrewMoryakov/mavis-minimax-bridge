@@ -1,5 +1,17 @@
 # Usage
 
+Start with the user-friendly first screen:
+
+```powershell
+npm start
+```
+
+In Codex, you can also say:
+
+```text
+Use the mavis-minimax-bridge skill and check status.
+```
+
 Initialize local runtime files:
 
 ```powershell

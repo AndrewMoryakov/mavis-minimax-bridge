@@ -129,7 +129,41 @@ function printJson(value) {
 }
 
 function usage() {
+  console.log(`Mavis MiniMax Bridge - Start Here
+
+Most users do not need the full command list.
+
+In Codex, ask in plain language:
+  Use the mavis-minimax-bridge skill and check status.
+  Use the bridge to audit MiniMax token optimization.
+  Use the bridge to send this task to MiniMax for review.
+
+Safe local checks, no model tokens:
+  node .\\bridge.mjs guide
+  node .\\bridge.mjs doctor
+  node .\\bridge.mjs status
+  node .\\bridge.mjs audit
+  node .\\bridge.mjs canary-estimate
+
+When you have a MiniMax session id:
+  node .\\bridge.mjs session set --session mvs_<id>
+
+Review a task with MiniMax, spends tokens:
+  node .\\bridge.mjs ask --yes --mode review-only --task .\\task.local.md
+
+Codex/MiniMax baton workflow:
+  node .\\bridge.mjs duet start --goal .\\duet-goal.local.md
+  node .\\bridge.mjs duet loop --dry-run
+  node .\\bridge.mjs duet loop --yes
+  node .\\bridge.mjs duet report
+
+Full reference:
+  node .\\bridge.mjs help --all`);
+}
+
+function fullUsage() {
   console.log(`Usage:
+  node .\\bridge.mjs guide
   node .\\bridge.mjs doctor
   node .\\bridge.mjs status
   node .\\bridge.mjs state
@@ -164,6 +198,10 @@ function usage() {
   node .\\bridge.mjs duet note --agent codex|minimax --note <file> [--raw]
   node .\\bridge.mjs tail [--lines <n>] [--raw]
   node .\\bridge.mjs stop`);
+}
+
+function guideCommand() {
+  usage();
 }
 
 class WorkspaceGuardError extends Error {
@@ -3992,7 +4030,11 @@ async function stopCommand() {
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   try {
-    if (!command || command === "help" || command === "--help") return usage();
+    if (!command || command === "help" || command === "--help") {
+      if (args.includes("--all")) return fullUsage();
+      return usage();
+    }
+    if (command === "guide" || command === "start" || command === "start-here") return guideCommand();
     if (command === "doctor") return doctorCommand();
     ensureWorkspaceRoot(command, args);
     if (command === "status") return await statusCommand();

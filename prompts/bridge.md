@@ -1,6 +1,6 @@
 ---
 description: Use the local Mavis MiniMax Bridge from Codex
-argument-hint: [doctor|status|audit|state|mode|session|tokens|ask|duet] [ARGS...]
+argument-hint: [guide|doctor|status|audit|state|mode|session|tokens|ask|duet] [ARGS...]
 ---
 
 Use the `mavis-minimax-bridge` skill and operate the local bridge repository.
@@ -13,6 +13,8 @@ $ARGUMENTS
 
 Rules:
 
+- If no arguments are provided, run `node .\bridge.mjs guide` and summarize the
+  four simplest user paths.
 - First inspect bridge state with local-only commands when the request is vague;
   use `doctor` when the active shell may be in the wrong project.
 - If the user describes a task and says `let's go`, treat it as a request to

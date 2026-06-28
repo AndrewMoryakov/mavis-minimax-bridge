@@ -44,6 +44,8 @@
     "test": "node --test",
     "test:offline": "node --test tests/*.test.mjs",
     "test:release": "npm run check && npm run test:offline && git diff --check",
+    "start": "node ./bridge.mjs guide",
+    "guide": "node ./bridge.mjs guide",
     "init": "node ./scripts/init-runtime.mjs",
     "install:skill": "node ./scripts/install-mavis-skill.mjs",
     "install:codex-skill": "node ./scripts/install-codex-skill.mjs",

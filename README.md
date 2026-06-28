@@ -22,6 +22,28 @@ Experimental, Windows-first, and intentionally conservative. It is designed for
 short coordination, review-only turns, and token-optimization canaries. It is
 not a daemon and it does not ship secrets, ledgers, or MiniMax vendor code.
 
+## Start Here
+
+Open Codex and say:
+
+```text
+Use the mavis-minimax-bridge skill and check status.
+```
+
+Or run the local first screen:
+
+```powershell
+npm start
+```
+
+That prints the small set of safe checks and the next commands for connecting a
+MiniMax session, asking MiniMax for review, or starting a Codex/MiniMax baton
+workflow. Use the long command reference only when you need advanced controls:
+
+```powershell
+node .\bridge.mjs help --all
+```
+
 ## Install
 
 Clone the repository, then optionally create a local config:
