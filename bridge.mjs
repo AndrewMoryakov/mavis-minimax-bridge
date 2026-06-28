@@ -9,6 +9,7 @@ import { defaultConfig, normalizeConfig, parseConfigValue, validateConfig } from
 import { appendDuetJournalEntry, readDuetJournalFile } from "./lib/duet-journal.mjs";
 import { duetLockStaleMs, withFileLock, withFileLockAsync } from "./lib/duet-lock.mjs";
 import { escapeNonAscii, readJson, readJsonFromString, readJsonl, stableStringify } from "./lib/json.mjs";
+import { comparablePath, isPathInsideRoot, pathsEqual, realpathOrResolve } from "./lib/path-security.mjs";
 import { makePaths } from "./lib/paths.mjs";
 
 const bridgeDir = path.dirname(fileURLToPath(import.meta.url));
@@ -111,24 +112,6 @@ class WorkspaceGuardError extends Error {
     this.skipLedger = true;
     this.details = details;
   }
-}
-
-function realpathOrResolve(inputPath) {
-  const resolved = path.resolve(inputPath);
-  try {
-    return fs.realpathSync.native(resolved);
-  } catch (_) {
-    return resolved;
-  }
-}
-
-function comparablePath(inputPath) {
-  const normalized = path.normalize(realpathOrResolve(inputPath));
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-function pathsEqual(left, right) {
-  return comparablePath(left) === comparablePath(right);
 }
 
 function gitRootInfo(cwd) {
@@ -493,13 +476,6 @@ function readUntrackedSnippet(repoRoot, relativePath, perFileLimit) {
   const truncated = stats.size > bytesRead || text.length > perFileLimit;
   const body = truncated ? `${text.slice(0, perFileLimit)}\n\n[truncated: file is ${stats.size} bytes]` : text;
   return `### ${relativePath}\n\n\`\`\`\n${body}\n\`\`\``;
-}
-
-function isPathInsideRoot(rootPath, candidatePath) {
-  const root = comparablePath(rootPath);
-  const candidate = comparablePath(candidatePath);
-  const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  return candidate === root || candidate.startsWith(rootWithSep);
 }
 
 function relativeBridgePath(filePath) {
