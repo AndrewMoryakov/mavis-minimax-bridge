@@ -16,6 +16,14 @@ import { makeSourceContext, readSourceSnippet } from "./lib/source-context.mjs";
 import { makeVerifier, verifierArgs } from "./lib/verifier.mjs";
 import { fetchJson, fetchJsonWithTimeout } from "./lib/http-json.mjs";
 import { makeMvsClient } from "./lib/mvs-client.mjs";
+import {
+  codexIsolationWarning,
+  codexPromptPathForOutput,
+  lastCodexUsage,
+  parseCodexJsonEvents,
+  requireCodexMode,
+  terminateChildProcessTree,
+} from "./lib/codex-exec.mjs";
 
 const bridgeDir = path.dirname(fileURLToPath(import.meta.url));
 const paths = makePaths(bridgeDir);
@@ -2527,12 +2535,6 @@ function oneLinePreview(text, limit = 200) {
   return String(text || "").replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
-function requireCodexMode(value, fallback = "exec") {
-  const mode = String(value || fallback).toLowerCase();
-  if (!["exec", "isolated"].includes(mode)) throw new Error("--codex-mode must be isolated or exec");
-  return mode;
-}
-
 function codexModeArg(args, fallback = "exec") {
   const idx = args.indexOf("--codex-mode");
   if (idx < 0) return requireCodexMode(fallback);
@@ -2717,44 +2719,6 @@ async function runDuetReviewOnlyTurn(args, promptText, envelope) {
   };
 }
 
-function parseCodexJsonEvents(text) {
-  const events = [];
-  for (const line of String(text || "").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || !trimmed.startsWith("{")) continue;
-    try {
-      events.push(JSON.parse(trimmed));
-    } catch (_) {
-      // Codex can mix diagnostics into --json output; keep parsing tolerant.
-    }
-  }
-  return events;
-}
-
-function lastCodexUsage(events) {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const usage = events[index]?.usage;
-    if (usage && typeof usage === "object") return usage;
-  }
-  return null;
-}
-
-function terminateChildProcessTree(child) {
-  if (!child?.pid) return;
-  if (process.platform === "win32") {
-    spawnSync("taskkill.exe", ["/pid", String(child.pid), "/T", "/F"], {
-      windowsHide: true,
-      stdio: "ignore",
-    });
-    return;
-  }
-  child.kill("SIGTERM");
-}
-
-function codexPromptPathForOutput(outputPath) {
-  return outputPath.replace(/\.pending\.local\.md$/i, ".prompt.local.txt");
-}
-
 function codexWorkspaceForMode(codexMode, ts = Date.now()) {
   if (codexMode === "isolated") {
     const workspace = path.join(
@@ -2776,10 +2740,6 @@ function codexWorkspaceForMode(codexMode, ts = Date.now()) {
     skipGitRepoCheck: false,
     cleanup: false,
   };
-}
-
-function codexIsolationWarning(codexMode) {
-  return codexMode === "isolated" ? "codex_isolated_is_scratch_readonly_not_hard_security_boundary" : null;
 }
 
 async function runCodexExecTurn(promptText, envelope, outputPath, options = {}) {
