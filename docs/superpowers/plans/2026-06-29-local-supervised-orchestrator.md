@@ -17,6 +17,8 @@
 - The duet relay and its files are untouched; orchestrator state files are all `orch-*`, guarded by a separate `orch.lock` via the `lib/duet-lock` helper.
 - Tests are offline and token-free: codex via `fakeModelReplyFromEnv`; MiniMax/orchestrator via a local `node:http` server + scripted replies. Each test is mutation-meaningful.
 - The orchestrator only ever receives bounded worker-summaries (never raw output); decisions are schema-validated, fail-closed; `worker` is validated against the participant registry, never against `"codex"/"minimax"` literals.
+- **Supervised, not autonomous.** `orchestrate start --yes` runs the loop *without per-step approval* (this is "под ключ"), but the human supervises it and can **interrupt at any time (Ctrl+C)**. There is no unattended/long-running mode. Interrupting mid-worker-turn leaves a `worker-started` with no `worker-result`; `orchestrate resume` then surfaces that one ambiguous case to the human and never auto-reruns it.
+- **Fail-loud log.** The append-only ledger is the human's source of truth for recovery decisions, so `status`/`resume` must **warn when any non-empty ledger line was dropped/unparseable** — never silently present an incomplete picture.
 - TDD: RED → GREEN → refactor; small commits per task.
 
 **Resolved defaults** (were open items in the spec):
@@ -290,6 +292,7 @@ git commit -m "Add orchestrator target validation"
   - `readOrchLedger(ledgerPath): object[]` — reads all events (tolerant of a trailing partial line).
   - `projectOrchState(events): { task, target, status, step, spent, lastDecision, participants }` — folds the log into the compact projection.
   - `ambiguousTail(events): {worker, subtask, step} | null` — returns the pending worker if the last event is a `worker-started` with no following `worker-result`, else null.
+  - `ledgerIntegrity(ledgerPath): { total, parsed, dropped }` — counts non-empty lines, how many parsed, and how many were dropped/unparseable (so `status`/`resume` can warn — fail-loud).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -299,7 +302,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appendOrchEvent, readOrchLedger, projectOrchState, ambiguousTail } from "../lib/orch-ledger.mjs";
+import { appendOrchEvent, readOrchLedger, projectOrchState, ambiguousTail, ledgerIntegrity } from "../lib/orch-ledger.mjs";
 
 function ledger(t) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "orch-ledger-"));
@@ -338,6 +341,16 @@ test("ambiguousTail flags an interrupted worker-started", (t) => {
   assert.deepEqual(ambiguousTail(readOrchLedger(p)), { worker: "codex", subtask: "S", step: 1 });
   appendOrchEvent(p, { kind: "worker-result", step: 1, worker: "codex", status: "ok" }, NOW);
   assert.equal(ambiguousTail(readOrchLedger(p)), null);
+});
+
+test("ledgerIntegrity counts dropped non-empty lines (fail-loud)", (t) => {
+  const p = ledger(t);
+  appendOrchEvent(p, { kind: "init", payload: { task: "T" } }, NOW);
+  fs.appendFileSync(p, "{ not valid json\n", "utf8"); // a corrupted line
+  const integ = ledgerIntegrity(p);
+  assert.equal(integ.total, 2);
+  assert.equal(integ.parsed, 1);
+  assert.equal(integ.dropped, 1);
 });
 ```
 
@@ -391,6 +404,16 @@ export function ambiguousTail(events) {
     }
   }
   return null;
+}
+
+export function ledgerIntegrity(ledgerPath) {
+  if (!fs.existsSync(ledgerPath)) return { total: 0, parsed: 0, dropped: 0 };
+  const lines = fs.readFileSync(ledgerPath, "utf8").split(/\r?\n/).filter((l) => l.trim().length > 0);
+  let parsed = 0;
+  for (const line of lines) {
+    try { JSON.parse(line); parsed += 1; } catch (_) { /* dropped */ }
+  }
+  return { total: lines.length, parsed, dropped: lines.length - parsed };
 }
 ```
 
@@ -772,28 +795,58 @@ git commit -m "Add orchestrator loop"
 
 ---
 
-### Task 9: CLI wiring + runtime files + docs (`bridge.mjs`)
+### Task 9a: `orchestrate start` (CLI dispatch + transport wiring)
+
+The transport wiring (`runWorker` → `runCodexExecTurn` / `sendPrompt`) lives in
+`bridge.mjs` because those functions are bridge-resident (a `lib/` module may not
+import `bridge.mjs`). It is exercised end-to-end via the CLI as a subprocess —
+codex through `MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY`, MiniMax/orchestrator through a
+local `node:http` server — so no real model is called.
 
 **Files:**
-- Modify: `bridge.mjs` (add `orchestrate` dispatch + `orchestrateStartCommand`/`orchestrateStatusCommand`/`orchestrateResumeCommand`, wiring the lib modules to real transports)
-- Modify: `.gitignore` (add `/orch-*` and `/orch-artifacts/`)
-- Modify: `package.json` (do NOT add `orch-*` to `files`; confirm absence)
-- Create: `docs/ORCHESTRATE.md` (usage), update `docs/RUNTIME_FILES.md`
-- Test: `tests/bridge-orchestrate.test.mjs` (end-to-end via the sandbox harness, codex via `fakeModelReplyFromEnv`, MiniMax/orchestrator via a local `node:http` server)
+- Modify: `bridge.mjs` (add the `orchestrate` dispatch branch + `orchestrateStartCommand`)
+- Test: `tests/bridge-orchestrate.test.mjs` (new; reuse the `sandbox`/`runBridge`/`ok` helpers and the local-http-server pattern from `tests/bridge-cli.test.mjs`)
 
 **Interfaces:**
-- Consumes: all of `lib/orch-*.mjs` + `runCodexExecTurn` (codex worker), `sendPrompt`/`createSession` (minimax worker + orchestrator), `withFileLockAsync` (orch.lock), `now`, `appendJsonl`.
-- Produces: CLI commands `orchestrate start --task <f> --target <dir> --yes`, `orchestrate status`, `orchestrate resume`.
+- Consumes: every `lib/orch-*.mjs`; `runCodexExecTurn`, `sendPrompt`, `createSession` (bridge-resident); `withFileLockAsync`, `now`, `validateTarget`.
+- Produces: `orchestrate start --task <f> --target <dir> --yes` — runs the loop under `orch.lock`, writing `orch-ledger.jsonl` + `orch-state.json`.
 
-- [ ] **Step 1: Write the failing test** (end-to-end happy path; orchestrator + minimax via scripted local server, no real spend)
+- [ ] **Step 1: Write the failing test** (orchestrate-specific assertions are concrete; mirror the existing harness for `sandbox`/`runBridge`/`startMavisServer`)
 
 ```js
-// tests/bridge-orchestrate.test.mjs — model the harness on tests/bridge-cli.test.mjs:
-// sandbox(t), runBridge(dir, args), ok(result), a local http.createServer for the
-// opencode/mavis endpoints, and MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY for any codex turn.
-// Assert: `orchestrate start --task TASK.md --target <repo> --yes --raw` exits 0,
-// writes orch-ledger.jsonl whose kinds end with "final", and `orchestrate status`
-// reports status "done". (Full scripted-server wiring written here.)
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+// sandbox(t), runBridge(dir,args,env), ok(res), startMavisServer(t, scriptedReplies)
+// are imported/copied from the existing tests/bridge-cli.test.mjs harness.
+
+test("orchestrate start runs a scripted task to done", async (t) => {
+  const dir = sandbox(t);
+  const target = sandbox(t); // a separate repo dir, != bridge dir
+  fs.writeFileSync(path.join(dir, "TASK.md"), "Do the thing.", "utf8");
+  // scripted orchestrator replies (served as MiniMax sendPrompt responses):
+  const server = startMavisServer(t, [
+    '{"action":"run","worker":"codex","subtask":"edit a file"}',
+    '{"action":"done","summary":"finished"}',
+  ]);
+  const res = ok(runBridge(dir, [
+    "orchestrate", "start", "--task", "TASK.md", "--target", target,
+    "--daemon-port", String(server.port), "--yes", "--raw",
+  ], { MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1", MAVIS_BRIDGE_TEST_MODEL_REPLY: "codex did it" }));
+  const kinds = fs.readFileSync(path.join(dir, "orch-ledger.jsonl"), "utf8")
+    .trim().split("\n").map((l) => JSON.parse(l).kind);
+  assert.equal(kinds.includes("init"), true);
+  assert.equal(kinds[kinds.length - 1], "final");
+});
+
+test("orchestrate start rejects a target inside the bridge dir", (t) => {
+  const dir = sandbox(t);
+  fs.writeFileSync(path.join(dir, "TASK.md"), "x", "utf8");
+  const res = runBridge(dir, ["orchestrate", "start", "--task", "TASK.md", "--target", dir, "--yes"]);
+  assert.notEqual(res.code, 0);
+  assert.match(res.stderr, /target must not be the bridge directory/);
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -803,31 +856,121 @@ Expected: FAIL (command `orchestrate` unknown).
 
 - [ ] **Step 3: Write minimal implementation**
 
-Add to `bridge.mjs`: the `orchestrate` command branch in the dispatcher; `orchestrateStartCommand(args)` that (1) `requireYes`, (2) `validateTarget`, (3) creates the worktree/sessions, (4) builds `makeOrchestrator`/`makeWorkerRunner`/`makeBudget` with `runWorker` wired to `runCodexExecTurn` (codex) and `sendPrompt` (minimax), (5) runs `runOrchestratorLoop` under `withFileLockAsync(orchLockPath, …)`, appending via `appendOrchEvent(orchLedgerPath, ev, now)` and writing the projection to `orch-state.json`; `orchestrateStatusCommand` prints `projectOrchState(readOrchLedger(...))`; `orchestrateResumeCommand` replays and, on an `ambiguousTail`, prints the pending worker + `git status` and exits asking the human to choose (no auto-rerun). Wire `priorTurns` from the ledger's prior `worker-result` summaries (char-bounded). Add `orch-*` to `.gitignore`.
+In `bridge.mjs`: add `if (command === "orchestrate") return await orchestrateCommand(args);`. `orchestrateStartCommand(args)`: `requireYes`; resolve `orchLedgerPath`/`orchStatePath`/`orchLockPath` from `bridgeDir`; `validateTarget(argValue(args,"--target"), bridgeDir)`; create a per-task git worktree of the target (dirty, no auto-commit); `createSession` for the MiniMax worker + a dedicated orchestrator session; build `makeBudget`, `makeWorkerRunner` with `runWorker` dispatching codex→`runCodexExecTurn` (cwd=worktree) / minimax→`sendPrompt`, `makeOrchestrator` with `askOrchestrator`→`sendPrompt` on the orchestrator session; run `runOrchestratorLoop` inside `withFileLockAsync(orchLockPath, …)`, `appendEvent: (ev)=>appendOrchEvent(orchLedgerPath, ev, now)`, writing `projectOrchState` to `orchStatePath` after each event. Append the `init` line (task, target, participants+sessionIds) before the loop.
 
-- [ ] **Step 4: Run test + full gate**
+- [ ] **Step 4: Run test + gate**
 
 Run: `node --test tests/bridge-orchestrate.test.mjs` → PASS
-Run: `npm run test:release` → all green
-Run: `node bridge.mjs orchestrate status` (no active task) → clean "no orchestrator task" message
+Run: `npm run test:release` → green
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add bridge.mjs tests/bridge-orchestrate.test.mjs
+git commit -m "Add orchestrate start command"
+```
+
+---
+
+### Task 9b: `orchestrate status` (fail-loud projection)
+
+**Files:**
+- Modify: `bridge.mjs` (add `orchestrateStatusCommand`)
+- Test: extend `tests/bridge-orchestrate.test.mjs`
+
+**Interfaces:**
+- Consumes: `readOrchLedger`, `projectOrchState`, `ledgerIntegrity` (Task 4).
+- Produces: `orchestrate status` — prints the projection; **warns when `ledgerIntegrity().dropped > 0`**.
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+test("orchestrate status reports projection and warns on a corrupt ledger line", (t) => {
+  const dir = sandbox(t);
+  const led = path.join(dir, "orch-ledger.jsonl");
+  fs.writeFileSync(led,
+    JSON.stringify({ seq: 0, kind: "init", payload: { task: "T", target: "/x" } }) + "\n" +
+    JSON.stringify({ seq: 1, kind: "final", payload: { action: "done" } }) + "\n" +
+    "{ corrupt line\n", "utf8");
+  const res = ok(runBridge(dir, ["orchestrate", "status", "--raw"]));
+  assert.match(res.stdout, /"status":\s*"done"/);
+  assert.match(res.stdout + res.stderr, /dropped 1|integrity|unparseable/i);
+});
+```
+
+- [ ] **Step 2: Run** → FAIL (no status output / no warning).
+
+- [ ] **Step 3: Implement** `orchestrateStatusCommand(args)`: read `orchLedgerPath`; if absent, print a clean "no orchestrator task" object; else `printJson(projectOrchState(readOrchLedger(path)))` and, if `ledgerIntegrity(path).dropped > 0`, also emit a `warning` field / stderr line naming the dropped count (fail-loud).
+
+- [ ] **Step 4: Run** the test → PASS; `npm run test:release` → green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add bridge.mjs tests/bridge-orchestrate.test.mjs
+git commit -m "Add orchestrate status with fail-loud ledger integrity"
+```
+
+---
+
+### Task 9c: `orchestrate resume` + runtime files + docs
+
+**Files:**
+- Modify: `bridge.mjs` (add `orchestrateResumeCommand`)
+- Modify: `.gitignore` (add `/orch-*` and `/orch-artifacts/`)
+- Modify: `package.json` (confirm `orch-*` is NOT in the `files` whitelist)
+- Create: `docs/ORCHESTRATE.md`; Modify: `docs/RUNTIME_FILES.md`
+- Test: extend `tests/bridge-orchestrate.test.mjs`
+
+**Interfaces:**
+- Consumes: `readOrchLedger`, `ambiguousTail` (Task 4).
+- Produces: `orchestrate resume` — continues a task; on the single ambiguous tail, **surfaces it to the human and never auto-reruns**.
+
+- [ ] **Step 1: Write the failing test** (the supervised recovery contract — no silent rerun)
+
+```js
+test("orchestrate resume surfaces an interrupted worker-started and does not rerun it", (t) => {
+  const dir = sandbox(t);
+  const target = sandbox(t);
+  fs.writeFileSync(path.join(dir, "orch-ledger.jsonl"),
+    JSON.stringify({ seq: 0, kind: "init", payload: { task: "T", target } }) + "\n" +
+    JSON.stringify({ seq: 1, kind: "worker-started", step: 1, worker: "codex", subtask: "edit" }) + "\n",
+    "utf8");
+  const res = runBridge(dir, ["orchestrate", "resume", "--raw"]); // no --yes: must not spend/rerun
+  assert.match(res.stdout + res.stderr, /interrupted|worker-started|ambiguous/i);
+  assert.match(res.stdout + res.stderr, /codex/);
+  // it must ask the human, not silently continue a spend:
+  const kinds = fs.readFileSync(path.join(dir, "orch-ledger.jsonl"), "utf8")
+    .trim().split("\n").map((l) => JSON.parse(l).kind);
+  assert.equal(kinds.filter((k) => k === "worker-started").length, 1); // unchanged
+});
+```
+
+- [ ] **Step 2: Run** → FAIL (command unknown / no surface).
+
+- [ ] **Step 3: Implement** `orchestrateResumeCommand(args)`: read the ledger; `const pending = ambiguousTail(events)`; if `pending`, print `{event:"orchestrate-resume-blocked", pending, hint:"redo / mark-interrupted / abort", gitStatus}` and exit WITHOUT running the loop or spending (no auto-rerun) unless the human re-invokes with an explicit choice flag (post-MVP); else continue the loop (same wiring as 9a) from the projected state. Add `/orch-*` and `/orch-artifacts/` to `.gitignore`. Write `docs/ORCHESTRATE.md` (usage incl. "supervised: you can Ctrl+C; resume will surface an interrupted turn") and add the `orch-*` runtime files to `docs/RUNTIME_FILES.md`.
+
+- [ ] **Step 4: Run** the test → PASS; `npm run test:release` → green; manual: `node bridge.mjs orchestrate status` with no task → clean "no task" message.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add bridge.mjs .gitignore package.json docs/ORCHESTRATE.md docs/RUNTIME_FILES.md tests/bridge-orchestrate.test.mjs
-git commit -m "Wire orchestrate command and runtime files"
+git commit -m "Add orchestrate resume and runtime-files contract"
 ```
 
 ---
 
 ## Sequencing & deferred
 
-Tasks 1–5 are pure leaves (parallelizable). Task 6/7 depend on 1–2. Task 8 depends on 4–7. Task 9 depends on all. Each ends green; `npm run test:release` after every task.
+Tasks 1–5 are pure leaves (parallelizable). Tasks 6/7 depend on 1–2. Task 8 depends on 4–7. Tasks 9a→9b→9c depend on all of 1–8 and run in order (each modifies `bridge.mjs` but is independently reviewable: a reviewer can accept `start` yet reject `resume`). Each task ends green; run `npm run test:release` after every task.
 
-Deferred (NOT in this plan, per the spec's non-goals): native codex resume, per-turn commits, multi-case auto-recovery, parallel/fan-out workers, user-defined pipeline, a third worker (Claude) — the registry already accommodates it but the MVP ships codex+minimax.
+Deferred (NOT in this plan, per the spec's non-goals): native codex resume, per-turn commits, multi-case auto-recovery, an explicit resume `--choice` flag, parallel/fan-out workers, user-defined pipeline, a third worker (Claude) — the registry already accommodates it but the MVP ships codex+minimax.
 
 ## Self-review notes
 
-- Spec coverage: §1 components → T1–T9; §2 data flow/log/recovery → T4, T8, T9; §3 decision protocol → T1, T7; §4a worker-summary → T2, T6; §4b/4c memory + target → T3, T6, T9; §5 termination/budget → T5, T8; §6 testing → every task is TDD offline. The "one recovery rule" → T4 `ambiguousTail` + T9 resume handling.
+- Spec coverage: §1 components → T1–T9c; §2 data flow/log/recovery → T4 (`ambiguousTail`, `ledgerIntegrity`), T8, T9a/T9c; §3 decision protocol → T1, T7; §4a worker-summary → T2, T6; §4b/4c memory + target → T3, T6, T9a; §5 termination/budget → T5, T8; §6 testing → every task is TDD offline.
+- The "one recovery rule" → T4 `ambiguousTail` + T9c resume surfaces-to-human (no auto-rerun); fail-loud log → T4 `ledgerIntegrity` + T9b status warning.
+- Supervised framing held: `--yes` runs without per-step approval but the human supervises and can interrupt; resume never auto-reruns a spend.
 - The orchestrator-model and defaults open items are resolved in Global Constraints.
-- Interface names are threaded: `parseOrchestratorDecision` (T1) used in T7; `buildWorkerSummary` (T2) in T6; `appendOrchEvent`/`projectOrchState`/`ambiguousTail` (T4) in T8/T9; `makeBudget` (T5) in T8/T9.
+- Interface names are threaded: `parseOrchestratorDecision` (T1)→T7; `buildWorkerSummary` (T2)→T6; `appendOrchEvent`/`projectOrchState`/`ambiguousTail`/`ledgerIntegrity` (T4)→T8/T9; `makeBudget` (T5)→T8/T9a; `validateTarget` (T3)→T9a.
