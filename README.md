@@ -292,7 +292,9 @@ node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcri
 `duet report` is local-only and redacted. Use it after `duet loop --yes` to
 see the final state, stop reasons, step counts, token usage, verifier summaries,
 transcript hashes, suggested continuation commands, and the separated budget
-diagnostics for estimated vs actual token usage.
+diagnostics for estimated vs actual token usage. It also summarizes recent
+`duet-step` provider/model/token/cost totals, including manual Claude steps;
+`token-stats --ledger` is unchanged and does not merge Claude duet costs yet.
 
 Raw transcript exports require explicit `--raw`; raw file output must use a
 `.local.*` path.
@@ -391,7 +393,9 @@ The report is safe to inspect by default: it summarizes the latest `duet-loop`
 ledger event and current relay state without printing local goal, handoff, or
 journal text. It separates relay terminal status from loop stop reasons and
 includes a `budget` block with estimated input, actual usage where available,
-and any budget violation.
+and any budget violation. Recent manual Claude step costs are shown in the
+report usage section only; they are intentionally not merged into
+`token-stats --ledger` in this stage.
 
 Run a local verifier through the bridge:
 

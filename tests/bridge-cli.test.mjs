@@ -1120,6 +1120,47 @@ test("duet report summarizes the latest loop without leaking relay text", (t) =>
     MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: done\n\nCodex loop report completed ${secret}.`,
   };
   ok(runBridge(dir, ["duet", "loop", "--yes", "--max-rounds", "3"], { env }));
+  fs.appendFileSync(path.join(dir, "ledger.jsonl"), `${JSON.stringify({
+    event: "duet-step",
+    agent: "claude",
+    provider: "anthropic",
+    model: "claude-sonnet-4",
+    status: "running",
+    applyStatus: "applied",
+    entries: [{
+      provider: "anthropic",
+      role: "claude",
+      model: "claude-sonnet-4",
+      inputTokens: 111,
+      outputTokens: 22,
+      cacheRead: 3,
+      cacheWrite: 4,
+      costUsd: 0.0042,
+      exitCode: 0,
+      isError: false,
+    }],
+    signals: { providerClaude: true, isError: false },
+    answerSummary: { chars: 10, lines: 1, sha256: "fake" },
+  })}\n`, "utf8");
+  fs.appendFileSync(path.join(dir, "ledger.jsonl"), `${JSON.stringify({
+    event: "duet-step",
+    agent: "minimax",
+    provider: "minimax",
+    model: "minimax/MiniMax-M3",
+    status: "done",
+    applyStatus: "applied",
+    entries: [{
+      provider: "minimax",
+      role: "main",
+      model: "minimax/MiniMax-M3",
+      inputTokens: 222,
+      outputTokens: 33,
+      cacheRead: 5,
+      cacheWrite: 6,
+    }],
+    signals: { providerMinimax: true },
+    answerSummary: { chars: 10, lines: 1, sha256: "fake" },
+  })}\n`, "utf8");
 
   const report = ok(runBridge(dir, ["duet", "report"]));
   assert.equal(report.event, "duet-report");
@@ -1131,6 +1172,16 @@ test("duet report summarizes the latest loop without leaking relay text", (t) =>
   assert.equal(report.lastLoop.budget.actualExceeded, false);
   assert.equal(report.lastLoop.counts.codexSteps, 1);
   assert.equal(report.lastLoop.steps[0].agent, "codex");
+  assert.equal(report.usage.tokenStatsLedgerMerged, false);
+  assert.match(report.usage.note, /token-stats --ledger is unchanged/);
+  assert.equal(report.usage.byAgent.claude.steps, 1);
+  assert.equal(report.usage.byAgent.claude.inputTokens, 111);
+  assert.equal(report.usage.byAgent.claude.outputTokens, 22);
+  assert.equal(report.usage.byAgent.claude.cacheReadTokens, 3);
+  assert.equal(report.usage.byAgent.claude.cacheWriteTokens, 4);
+  assert.equal(report.usage.byAgent.claude.costUsd, 0.0042);
+  assert.equal(report.usage.byAgent.minimax.inputTokens, 222);
+  assert.equal(report.usage.byAgent.minimax.outputTokens, 33);
   assert.equal(typeof report.transcript.journal.sha256, "string");
   assert.doesNotMatch(JSON.stringify(report), new RegExp(secret));
 
@@ -1141,6 +1192,9 @@ test("duet report summarizes the latest loop without leaking relay text", (t) =>
   assert.match(text, /# Duet Run Report/);
   assert.match(text, /terminal_status:done/);
   assert.match(text, /Budget:/);
+  assert.match(text, /Recent Duet Usage/);
+  assert.match(text, /Claude duet usage is reported here only/);
+  assert.match(text, /agent=claude provider=anthropic/);
   assert.doesNotMatch(text, new RegExp(secret));
 });
 

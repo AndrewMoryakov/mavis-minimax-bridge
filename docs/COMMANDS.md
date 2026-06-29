@@ -401,9 +401,11 @@ suppress `human_escalation`.
 Use `duet report` after a loop or step sequence to get a redacted run summary.
 It reads the current relay state and the latest `duet-loop` ledger event, then
 reports stop reasons, step counts, token usage, budget diagnostics, verifier
-summaries, transcript hashes, and suggested continuation commands. It is
-local-only and does not
-print goal, handoff, or journal text.
+summaries, recent `duet-step` provider/model/token/cost totals including Claude
+manual steps, transcript hashes, and suggested continuation commands. It is
+local-only and does not print goal, handoff, or journal text. Claude duet usage
+is shown here only for now; `token-stats --ledger` is unchanged and does not
+merge Claude duet costs in this stage.
 
 Use `duet verify` to run a Node verifier through the bridge. Verifiers must be
 `.js`, `.mjs`, or `.cjs` files inside the bridge root. The command uses

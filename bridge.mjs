@@ -2331,6 +2331,83 @@ function reportVerifierSummary(verifier) {
   };
 }
 
+function addNullableNumber(total, value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? total + numeric : total;
+}
+
+function emptyDuetUsageTotals() {
+  return {
+    steps: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+  };
+}
+
+function usageTotalsFromEntries(entries = []) {
+  const totals = emptyDuetUsageTotals();
+  for (const entry of entries) {
+    totals.inputTokens = addNullableNumber(totals.inputTokens, entry?.inputTokens);
+    totals.outputTokens = addNullableNumber(totals.outputTokens, entry?.outputTokens);
+    totals.cacheReadTokens = addNullableNumber(totals.cacheReadTokens, entry?.cacheRead);
+    totals.cacheWriteTokens = addNullableNumber(totals.cacheWriteTokens, entry?.cacheWrite);
+    totals.costUsd = addNullableNumber(totals.costUsd, entry?.costUsd);
+  }
+  return totals;
+}
+
+function addUsageTotals(target, source) {
+  target.steps += Number(source.steps || 0);
+  target.inputTokens += Number(source.inputTokens || 0);
+  target.outputTokens += Number(source.outputTokens || 0);
+  target.cacheReadTokens += Number(source.cacheReadTokens || 0);
+  target.cacheWriteTokens += Number(source.cacheWriteTokens || 0);
+  target.costUsd += Number(source.costUsd || 0);
+  return target;
+}
+
+function reportDuetStepUsage(step) {
+  const entries = Array.isArray(step.entries) ? step.entries : [];
+  const totals = usageTotalsFromEntries(entries);
+  totals.steps = 1;
+  return {
+    ts: step.ts || null,
+    agent: step.agent || null,
+    provider: step.provider || entries[0]?.provider || null,
+    model: step.model || entries[0]?.model || null,
+    status: step.status || null,
+    applyStatus: step.applyStatus || null,
+    resultSubtype: step.signals?.resultSubtype || entries[0]?.resultSubtype || null,
+    isError: Boolean(step.signals?.isError || entries.some((entry) => entry?.isError)),
+    totals,
+  };
+}
+
+function summarizeDuetStepUsage(events, ledgerLines) {
+  const steps = events
+    .filter((event) => event?.event === "duet-step")
+    .map(reportDuetStepUsage);
+  const totals = emptyDuetUsageTotals();
+  const byAgent = {};
+  for (const step of steps) {
+    addUsageTotals(totals, step.totals);
+    const agent = step.agent || "unknown";
+    byAgent[agent] ||= emptyDuetUsageTotals();
+    addUsageTotals(byAgent[agent], step.totals);
+  }
+  return {
+    scope: `duet-step events in last ${ledgerLines} ledger lines`,
+    tokenStatsLedgerMerged: false,
+    note: "Claude duet usage is reported here only; token-stats --ledger is unchanged and does not merge Claude usage in this stage.",
+    totals,
+    byAgent,
+    steps,
+  };
+}
+
 function loopContinueFlags(lastLoop) {
   const limits = lastLoop?.limits && typeof lastLoop.limits === "object" ? lastLoop.limits : {};
   const flags = [];
@@ -2374,7 +2451,8 @@ function duetReportPayload(args) {
   const ledgerLines = positiveIntegerArg(args, "--ledger-lines", "500");
   const state = readDuetState();
   const journal = readDuetJournal();
-  const latestLoop = latestLedgerEvent("duet-loop", ledgerLines);
+  const recentLedger = readJsonl(ledgerPath, ledgerLines);
+  const latestLoop = [...recentLedger].reverse().find((event) => event?.event === "duet-loop") || null;
   const lastLoop = latestLoop ? {
     found: true,
     ts: latestLoop.ts || null,
@@ -2415,6 +2493,7 @@ function duetReportPayload(args) {
       },
     },
     lastLoop,
+    usage: summarizeDuetStepUsage(recentLedger, ledgerLines),
     next: reportNextCommands(state, lastLoop.found ? lastLoop : null),
   };
 }
@@ -2470,6 +2549,17 @@ function renderDuetReportMarkdown(payload) {
         lines.push(`${index + 1}. status=${verifier.status ?? "unknown"} exit=${verifier.exitCode ?? "null"} durationMs=${verifier.durationMs ?? "unknown"}`);
         if (verifier.verifier?.basename) lines.push(`   verifier=${verifier.verifier.basename}`);
       }
+    }
+  }
+  lines.push("", "## Recent Duet Usage", "");
+  lines.push(payload.usage.note);
+  lines.push(`Scope: ${payload.usage.scope}`);
+  lines.push(`Totals: ${JSON.stringify(payload.usage.totals)}`);
+  lines.push(`By agent: ${JSON.stringify(payload.usage.byAgent)}`);
+  if (payload.usage.steps.length > 0) {
+    lines.push("", "### Recent Steps");
+    for (const [index, step] of payload.usage.steps.entries()) {
+      lines.push(`${index + 1}. agent=${step.agent ?? "unknown"} provider=${step.provider ?? "unknown"} model=${step.model ?? "unknown"} apply=${step.applyStatus ?? "unknown"} error=${step.isError} totals=${JSON.stringify(step.totals)}`);
     }
   }
   lines.push("", "## Next Commands", "");
