@@ -282,6 +282,7 @@ spend tokens:
 ```powershell
 node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --agents codex,claude --baton codex
 node .\bridge.mjs duet show
 node .\bridge.mjs duet next
 node .\bridge.mjs duet next --agent minimax
@@ -311,6 +312,12 @@ node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff .
 `duet init` creates `duet-state.json` and `duet-journal.md` in the repository
 root. They are local runtime files and can contain goals, handoffs, local paths,
 and coordination history.
+
+Use `--agents codex,minimax`, `--agents codex,claude`, or
+`--agents codex,minimax,claude` to define the relay participants. Manual
+handoffs must stay inside that registry. Claude can participate in manual
+handoffs and `duet step --agent claude --yes`; automatic `duet loop` execution
+for Claude is deferred and reports `unsupported_loop_agent:claude_stage7`.
 
 Use `duet start` when a human wants the simplest safe launch packet. It
 initializes the relay through the same path as `duet init`, then returns

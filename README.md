@@ -257,12 +257,18 @@ Initialize a relay from a local goal file:
 ```powershell
 node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12
 node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --agents codex,claude --baton codex
 ```
 
 `duet start` is the human-friendly local entry point. It initializes the relay
 like `duet init`, then returns a redacted launch packet with `show`, `next`,
 `loop --dry-run`, `loop --yes`, and `report` commands. It does not run Codex,
 MiniMax, or a verifier.
+
+Use `--agents codex,claude` or `--agents codex,minimax,claude` when Claude is a
+participant. Manual Claude handoffs work; automatic `duet loop` execution for
+Claude is intentionally deferred to the next stage and reports
+`unsupported_loop_agent:claude_stage7`.
 
 Inspect the relay:
 
@@ -489,7 +495,7 @@ node .\bridge.mjs mvs-status --session mvs_<id>
 node .\bridge.mjs mvs-peers --session mvs_<id>
 node .\bridge.mjs mvs-messages --session mvs_<id> --limit 5
 node .\bridge.mjs mvs-send --session mvs_<id> --task path\to\task.md --yes
-node .\bridge.mjs duet init --goal .\duet-goal.local.md --baton codex --max-iterations 12
+node .\bridge.mjs duet init --goal .\duet-goal.local.md --agents codex,minimax --baton codex --max-iterations 12
 node .\bridge.mjs duet show
 node .\bridge.mjs duet next
 node .\bridge.mjs duet packet export --agent codex

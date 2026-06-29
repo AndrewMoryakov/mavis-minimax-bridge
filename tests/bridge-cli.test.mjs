@@ -238,6 +238,43 @@ test("duet next reports terminal states and latest verifier summary", (t) => {
   assert.deepEqual(doneNext.nextActions.act, []);
 });
 
+test("duet agents registry routes manual handoffs without hidden minimax fallback", (t) => {
+  const dir = sandbox(t);
+  writeFile(dir, "goal.md", "Codex Claude registry goal");
+  writeFile(dir, "handoff.md", "Registry handoff");
+
+  const init = ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--agents", "codex,claude", "--baton", "codex"]));
+  assert.deepEqual(init.state.agents, ["codex", "claude"]);
+  assert.equal(init.state.baton, "codex");
+
+  const next = ok(runBridge(dir, ["duet", "next", "--agent", "codex"]));
+  assert.match(next.nextActions.act.join("\n"), /--to claude/);
+  assert.doesNotMatch(next.nextActions.act.join("\n"), /--to minimax/);
+
+  const dryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run"]));
+  assert.deepEqual(dryRun.limits.agents, ["codex", "claude"]);
+  assert.equal(dryRun.nextStep.agent, "codex");
+
+  ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--handoff", "handoff.md"]));
+  assert.equal(readJson(dir, "duet-state.json").baton, "claude");
+
+  const claudeDryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run"]));
+  assert.equal(claudeDryRun.wouldRunLoop, false);
+  assert.ok(claudeDryRun.stopReasons.includes("unsupported_loop_agent:claude_stage7"));
+
+  fails(
+    runBridge(dir, ["duet", "pass", "--from", "claude", "--to", "minimax", "--handoff", "handoff.md"]),
+    /not included in duet agents/,
+  );
+
+  const invalid = sandbox(t);
+  writeFile(invalid, "goal.md", "Invalid registry goal");
+  fails(
+    runBridge(invalid, ["duet", "init", "--goal", "goal.md", "--agents", "codex,claude", "--baton", "minimax"]),
+    /--baton must be included in --agents/,
+  );
+});
+
 test("duet packet export is a redacted projection by default and supports raw local output", (t) => {
   const dir = sandbox(t);
   const other = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-bridge-packet-outside-"));
@@ -468,7 +505,7 @@ test("duet step claude dry-run and live fake step are manual-only", (t) => {
   writeFile(dir, "handoff.md", "Manual handoff to Claude");
 
   ok(runBridge(dir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(missingCli)]));
-  ok(runBridge(dir, ["duet", "start", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "3"]));
+  ok(runBridge(dir, ["duet", "start", "--goal", "goal.md", "--agents", "codex,minimax,claude", "--baton", "codex", "--max-iterations", "3"]));
   ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--to", "claude", "--handoff", "handoff.md"]));
 
   const state = readJson(dir, "duet-state.json");
@@ -489,10 +526,9 @@ test("duet step claude dry-run and live fake step are manual-only", (t) => {
   assert.equal(dryRun.route.toolRisk, "no tools approved; live Claude step is Stage 4");
   assert.ok(dryRun.warnings.includes("claude.cli.missing"));
 
-  fails(
-    runBridge(dir, ["duet", "loop", "--dry-run"]),
-    /state\.baton must be one of: codex, minimax/,
-  );
+  const claudeLoopDryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run"]));
+  assert.equal(claudeLoopDryRun.wouldRunLoop, false);
+  assert.ok(claudeLoopDryRun.stopReasons.includes("unsupported_loop_agent:claude_stage7"));
 
   ok(runBridge(dir, ["config", "set", "--key", "claudeRequireAvailable", "--value", "true"]));
   fails(
@@ -505,7 +541,7 @@ test("duet step claude dry-run and live fake step are manual-only", (t) => {
   writeFile(codexDir, "handoff.md", "Manual handoff to Claude");
   const codexCli = writeFakeClaudeShim(codexDir, "handoff_codex");
   ok(runBridge(codexDir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(codexCli)]));
-  ok(runBridge(codexDir, ["duet", "start", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "3"]));
+  ok(runBridge(codexDir, ["duet", "start", "--goal", "goal.md", "--agents", "codex,claude", "--baton", "codex", "--max-iterations", "3"]));
   ok(runBridge(codexDir, ["duet", "pass", "--from", "codex", "--to", "claude", "--handoff", "handoff.md"]));
   const codexLive = ok(runBridge(codexDir, ["duet", "step", "--agent", "claude", "--yes"]));
   assert.equal(codexLive.agent, "claude");
@@ -548,10 +584,8 @@ test("duet step claude dry-run and live fake step are manual-only", (t) => {
   const direct = sandbox(t);
   writeFile(direct, "goal.md", "Direct Claude baton goal");
   ok(runBridge(direct, ["duet", "start", "--goal", "goal.md", "--baton", "claude"]));
-  fails(
-    runBridge(direct, ["duet", "pass", "--from", "claude", "--handoff", "goal.md"]),
-    /unknown loop agent 'claude'/,
-  );
+  const directPass = ok(runBridge(direct, ["duet", "pass", "--from", "claude", "--handoff", "goal.md"]));
+  assert.equal(directPass.state.baton, "codex");
 });
 
 test("duet step minimax yes applies a fake review-only handoff without leaking by default", (t) => {

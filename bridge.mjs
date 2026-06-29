@@ -185,8 +185,8 @@ function fullUsage() {
   node .\\bridge.mjs mvs-messages [--session <mvs-id>] [--limit <n>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-send --task <file> --yes [--session <mvs-id>] [--daemon-port <port>]
   node .\\bridge.mjs mvs-send --content <text> --allow-inline-content --yes [--session <mvs-id>] [--daemon-port <port>]
-  node .\\bridge.mjs duet start --goal <file> [--baton codex|minimax|claude] [--max-iterations <n>] [--force] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>]
-  node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax|claude] [--max-iterations <n>] [--force] [--raw]
+  node .\\bridge.mjs duet start --goal <file> [--agents codex,minimax|codex,claude|codex,minimax,claude] [--baton codex|minimax|claude] [--max-iterations <n>] [--force] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>]
+  node .\\bridge.mjs duet init --goal <file> [--agents codex,minimax|codex,claude|codex,minimax,claude] [--baton codex|minimax|claude] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet next [--agent codex|minimax|claude] [--raw]
   node .\\bridge.mjs duet packet export --agent codex|minimax|claude [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
@@ -461,6 +461,7 @@ function readLongPrompt(args) {
 
 const duetStartAllowedOptions = new Set([
   "--goal",
+  "--agents",
   "--baton",
   "--max-iterations",
   "--force",
@@ -474,6 +475,7 @@ const duetStartAllowedOptions = new Set([
 
 const duetInitAllowedOptions = new Set([
   "--goal",
+  "--agents",
   "--baton",
   "--max-iterations",
   "--force",
@@ -2023,6 +2025,7 @@ function tailCommand(args) {
 
 const duetManualAgents = new Set(["codex", "minimax", "claude"]);
 const duetLoopAgents = new Set(["codex", "minimax"]);
+const defaultDuetAgents = ["codex", "minimax"];
 const duetStatuses = new Set(["running", "done", "human_escalation"]);
 
 function requireDuetAgent(value, label) {
@@ -2037,6 +2040,35 @@ function requireDuetLoopAgent(value, label) {
     throw new Error(`${label} must be one of: codex, minimax`);
   }
   return value;
+}
+
+function parseDuetAgents(value, label = "--agents") {
+  const raw = value === null || value === undefined || value === "" ? defaultDuetAgents.join(",") : String(value);
+  const agents = [];
+  const seen = new Set();
+  for (const part of raw.split(",")) {
+    const agent = part.trim().toLowerCase();
+    if (!agent) continue;
+    requireDuetAgent(agent, label);
+    if (seen.has(agent)) throw new Error(`${label} must not repeat agents`);
+    seen.add(agent);
+    agents.push(agent);
+  }
+  if (agents.length < 2) throw new Error(`${label} must include at least two agents`);
+  return agents;
+}
+
+function duetAgentsForState(state) {
+  if (Array.isArray(state?.agents) && state.agents.length >= 2) return [...state.agents];
+  if (state?.baton === "claude") return ["codex", "minimax", "claude"];
+  return [...defaultDuetAgents];
+}
+
+function nextDuetAgent(state, agent) {
+  const agents = Array.isArray(state) ? state : duetAgentsForState(state);
+  const index = agents.indexOf(agent);
+  if (index < 0) throw new Error(`agent '${agent}' is not in duet agents: ${agents.join(",")}`);
+  return agents[(index + 1) % agents.length];
 }
 
 function requireDuetStatus(value) {
@@ -2101,12 +2133,19 @@ function validateDuetState(state) {
   };
   if (!state || typeof state !== "object" || Array.isArray(state)) fail("expected object");
   if (typeof state.goal !== "string" || !state.goal.trim()) fail("goal must be a non-empty string");
+  const agents = duetAgentsForState(state);
+  if (new Set(agents).size !== agents.length) fail("agents must not repeat agents");
+  for (const agent of agents) {
+    if (!duetManualAgents.has(agent)) fail("agents must contain only codex, minimax, claude");
+  }
   if (!duetStatuses.has(state.status)) fail("status must be one of: running, done, human_escalation");
   if (state.status === "running") {
     if (!duetManualAgents.has(state.baton)) fail("baton must be one of: codex, minimax, claude");
+    if (!agents.includes(state.baton)) fail("baton must be included in agents");
   } else if (state.baton !== null) {
     fail("baton must be null unless status is running");
   }
+  state.agents = agents;
   if (!Number.isSafeInteger(state.iteration) || state.iteration < 1) fail("iteration must be a positive integer");
   if (!Number.isSafeInteger(state.maxIterations) || state.maxIterations < 1) fail("maxIterations must be a positive integer");
   if (state.iteration > state.maxIterations) fail("iteration cannot exceed maxIterations");
@@ -2149,6 +2188,7 @@ function safeFileTimestamp(ts = now()) {
 function publicDuetState(state) {
   return {
     baton: state.baton,
+    agents: duetAgentsForState(state),
     iteration: state.iteration,
     maxIterations: state.maxIterations,
     status: state.status,
@@ -2643,7 +2683,7 @@ function duetNextActions(state, requestedAgent, allowedToAct) {
   if (state.status !== "running") {
     return { inspect, act: [], recover: [] };
   }
-  const implicitNext = (agent) => agent === "claude" ? "codex|minimax" : nextDuetAgent(agent);
+  const implicitNext = (agent) => nextDuetAgent(state, agent);
   const recover = allowedToAct
     ? []
     : [
@@ -3500,7 +3540,7 @@ async function runDuetStepLive(args, options = {}) {
     fs.writeFileSync(pendingPath, answer.trim() || `Status: running\n\n${fallbackAgent} returned an empty handoff.`, "utf8");
   }
   let status = modelStatus;
-  let passTo = agent === "claude" ? parseClaudeNextAgent(answer) : nextDuetAgent(agent);
+  let passTo = agent === "claude" ? parseClaudeNextAgent(answer) : nextDuetAgent(stateBefore, agent);
   const claudeRunFailed = agent === "claude" && (
     Boolean(modelRun.signals?.isError) ||
     Boolean(modelRun.signals?.timedOut) ||
@@ -3698,7 +3738,7 @@ function parseRequiredDuetAgents(options) {
     for (const rawAgent of String(value).split(",")) {
       const agent = rawAgent.trim().toLowerCase();
       if (!agent) continue;
-      requireDuetLoopAgent(agent, "--require-agents");
+      requireDuetAgent(agent, "--require-agents");
       if (seen.has(agent)) throw new Error("--require-agents must not repeat agents");
       seen.add(agent);
       agents.push(agent);
@@ -3709,6 +3749,15 @@ function parseRequiredDuetAgents(options) {
 
 function missingRequiredDuetAgents(requiredAgents, satisfiedAgents) {
   return requiredAgents.filter((agent) => !satisfiedAgents.has(agent));
+}
+
+function validateRequiredAgentsInState(requiredAgents, state) {
+  const agents = duetAgentsForState(state);
+  for (const agent of requiredAgents) {
+    if (!agents.includes(agent)) {
+      throw new Error(`--require-agents agent '${agent}' is not included in duet agents: ${agents.join(",")}`);
+    }
+  }
 }
 
 function parseDuetLoopOptions(args) {
@@ -3822,6 +3871,7 @@ function duetLoopDryRun(args) {
   const { profile, codexMode, raw, maxPacketChars, maxRounds, maxCodexSteps, maxMiniMaxSteps, maxTokens, requiredAgents, verifier } = loop;
   const state = readDuetState();
   const journal = readDuetJournal();
+  validateRequiredAgentsInState(requiredAgents, state);
 
   const warnings = [];
   const stopReasons = [];
@@ -3835,11 +3885,15 @@ function duetLoopDryRun(args) {
   if (!state.lastHandoff) warnings.push("missing_last_handoff");
 
   if (stopReasons.length === 0) {
-    const agent = requireDuetLoopAgent(state.baton, "state.baton");
-    nextStep = duetLoopStepPreview(agent, maxPacketChars, maxTokens, raw, codexMode);
-    if (nextStep.estimatedInputTokens > maxTokens) stopReasons.push(`token_budget:${nextStep.estimatedInputTokens}/${maxTokens}`);
-    if (agent === "codex" && maxCodexSteps < 1) stopReasons.push("max_codex_steps:0");
-    if (agent === "minimax" && maxMiniMaxSteps < 1) stopReasons.push("max_minimax_steps:0");
+    const agent = requireDuetAgent(state.baton, "state.baton");
+    if (!duetLoopAgents.has(agent)) {
+      stopReasons.push(`unsupported_loop_agent:${agent}_stage7`);
+    } else {
+      nextStep = duetLoopStepPreview(agent, maxPacketChars, maxTokens, raw, codexMode);
+      if (nextStep.estimatedInputTokens > maxTokens) stopReasons.push(`token_budget:${nextStep.estimatedInputTokens}/${maxTokens}`);
+      if (agent === "codex" && maxCodexSteps < 1) stopReasons.push("max_codex_steps:0");
+      if (agent === "minimax" && maxMiniMaxSteps < 1) stopReasons.push("max_minimax_steps:0");
+    }
   }
 
   printJson({
@@ -3852,6 +3906,7 @@ function duetLoopDryRun(args) {
     warning: warnings[0] || null,
     warnings,
     limits: {
+      agents: duetAgentsForState(state),
       profile,
       codexMode,
       maxRounds,
@@ -3914,6 +3969,7 @@ async function duetLoopLive(args) {
   const suppressedTerminalStatuses = [];
   let codexSteps = 0;
   let minimaxSteps = 0;
+  const agentSteps = {};
   let totalEstimatedInputTokens = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -3922,6 +3978,7 @@ async function duetLoopLive(args) {
 
   for (let round = 1; round <= maxRounds; round += 1) {
     const state = readDuetState();
+    validateRequiredAgentsInState(requiredAgents, state);
     if (state.status !== "running") {
       stopReasons.push(`terminal_status:${state.status}`);
       break;
@@ -3930,7 +3987,11 @@ async function duetLoopLive(args) {
       stopReasons.push("missing_baton");
       break;
     }
-    const agent = requireDuetLoopAgent(state.baton, "state.baton");
+    const agent = requireDuetAgent(state.baton, "state.baton");
+    if (!duetLoopAgents.has(agent)) {
+      stopReasons.push(`unsupported_loop_agent:${agent}_stage7`);
+      break;
+    }
     if (agent === "codex" && codexSteps >= maxCodexSteps) {
       stopReasons.push(`max_codex_steps:${codexSteps}/${maxCodexSteps}`);
       break;
@@ -3983,8 +4044,9 @@ async function duetLoopLive(args) {
       answerSummary: stepResult.out.answerSummary,
       state: stepResult.out.state,
     });
+    agentSteps[agent] = (agentSteps[agent] || 0) + 1;
     if (agent === "codex") codexSteps += 1;
-    else minimaxSteps += 1;
+    else if (agent === "minimax") minimaxSteps += 1;
     const usage = stepResult.out.usage || stepResult.out.signals || {};
     totalInputTokens += Number(usage.input_tokens ?? usage.inputTokens ?? 0) || 0;
     totalOutputTokens += Number(usage.output_tokens ?? usage.outputTokens ?? 0) || 0;
@@ -4054,6 +4116,7 @@ async function duetLoopLive(args) {
       rounds: steps.length,
       codexSteps,
       minimaxSteps,
+      agentSteps,
     },
     usage: {
       estimatedInputTokens: totalEstimatedInputTokens,
@@ -4061,6 +4124,7 @@ async function duetLoopLive(args) {
       outputTokens: totalOutputTokens,
     },
     limits: {
+      agents: duetAgentsForState(finalState),
       profile,
       codexMode,
       maxRounds,
@@ -4147,12 +4211,6 @@ async function duetVerifyCommand(args) {
   printJson(result);
 }
 
-function nextDuetAgent(agent) {
-  if (agent === "codex") return "minimax";
-  if (agent === "minimax") return "codex";
-  throw new Error(`unknown loop agent '${agent}'`);
-}
-
 function positiveIntegerArg(args, name, fallback) {
   const raw = argValue(args, name, fallback);
   const value = Number(raw);
@@ -4172,11 +4230,18 @@ function initializeDuetState(args) {
     throw new Error("duet state already exists; use --force to reinitialize");
   }
   const goal = readRequiredText(argValue(args, "--goal"), "--goal", duetMaxEntryChars);
-  const baton = requireDuetAgent(argValue(args, "--baton", "codex"), "--baton");
+  const requestedBaton = requireDuetAgent(argValue(args, "--baton", "codex"), "--baton");
+  const explicitAgents = argValue(args, "--agents", null);
+  const agents = explicitAgents === null && requestedBaton === "claude"
+    ? ["codex", "minimax", "claude"]
+    : parseDuetAgents(explicitAgents, "--agents");
+  if (!agents.includes(requestedBaton)) throw new Error("--baton must be included in --agents");
+  const baton = requestedBaton;
   const maxIterations = positiveIntegerArg(args, "--max-iterations", "12");
   const ts = now();
   const state = {
     goal,
+    agents,
     baton,
     iteration: 1,
     maxIterations,
@@ -4191,7 +4256,7 @@ function initializeDuetState(args) {
     duetJournalPath,
     `# Duet Journal\n\n## Goal\n\n${renderDuetUserText(goal)}\n\n## Current State\n\nBaton: ${baton}\nStatus: running\n\n## Decisions\n\n## Done\n\n## Open Questions\n\n## Last Handoff\n`,
   );
-  appendJsonl(ledgerPath, { event: "duet-init", baton, maxIterations });
+  appendJsonl(ledgerPath, { event: "duet-init", agents, baton, maxIterations });
   return state;
 }
 
@@ -4251,7 +4316,7 @@ function duetStartCommand(args) {
       "the live command can spend Codex/OpenAI and MiniMax tokens",
     ],
   };
-  appendJsonl(ledgerPath, { event: "duet-start", baton: state.baton, maxIterations: state.maxIterations, loop });
+  appendJsonl(ledgerPath, { event: "duet-start", agents: state.agents, baton: state.baton, maxIterations: state.maxIterations, loop });
   printJson(out);
 }
 
@@ -4276,9 +4341,12 @@ function duetPassCommand(args, options = {}) {
   const status = requireDuetStatus(argValue(args, "--status", "running"));
   const explicitTo = argValue(args, "--to", null);
   const to = status === "running"
-    ? requireDuetAgent(explicitTo || nextDuetAgent(from), "--to")
+    ? requireDuetAgent(explicitTo || nextDuetAgent(state, from), "--to")
     : explicitTo;
   if (to) requireDuetAgent(to, "--to");
+  const agents = duetAgentsForState(state);
+  if (!agents.includes(from)) throw new Error(`--from agent '${from}' is not included in duet agents: ${agents.join(",")}`);
+  if (to && !agents.includes(to)) throw new Error(`--to agent '${to}' is not included in duet agents: ${agents.join(",")}`);
 
   const handoff = readDuetHandoffText(argValue(args, "--handoff"));
   let nextIteration = state.iteration;
@@ -4332,8 +4400,8 @@ async function duetCommand(args) {
   const [subcommand, ...rest] = args;
   if (!subcommand || subcommand === "help" || subcommand === "--help") {
     console.log(`Usage:
-  node .\\bridge.mjs duet start --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>]
-  node .\\bridge.mjs duet init --goal <file> [--baton codex|minimax] [--max-iterations <n>] [--force] [--raw]
+  node .\\bridge.mjs duet start --goal <file> [--agents codex,minimax|codex,claude|codex,minimax,claude] [--baton codex|minimax|claude] [--max-iterations <n>] [--force] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--verifier <file>]
+  node .\\bridge.mjs duet init --goal <file> [--agents codex,minimax|codex,claude|codex,minimax,claude] [--baton codex|minimax|claude] [--max-iterations <n>] [--force] [--raw]
   node .\\bridge.mjs duet show [--raw]
   node .\\bridge.mjs duet next [--agent codex|minimax] [--raw]
   node .\\bridge.mjs duet packet export --agent codex|minimax [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
