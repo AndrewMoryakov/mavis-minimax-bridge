@@ -3784,7 +3784,7 @@ function parseDuetLoopOptions(args) {
       maxRounds: "8",
       maxCodexSteps: "8",
       maxMiniMaxSteps: "8",
-      maxClaudeSteps: "2",
+      maxClaudeSteps: "12",
       maxTokens: "60000",
       codexMode: "exec",
     };
@@ -4307,7 +4307,7 @@ function duetStartLoopOptions(args) {
   const maxRounds = positiveIntegerArg(args, "--max-rounds", "8");
   const maxCodexSteps = positiveIntegerArg(args, "--max-codex-steps", "4");
   const maxMiniMaxSteps = positiveIntegerArg(args, "--max-minimax-steps", "4");
-  const maxClaudeSteps = positiveIntegerArg(args, "--max-claude-steps", "2");
+  const maxClaudeSteps = positiveIntegerArg(args, "--max-claude-steps", "12");
   const maxTokens = positiveIntegerArg(args, "--max-tokens", "60000");
   const verifier = argValue(args, "--verifier", null);
   return { maxRounds, maxCodexSteps, maxMiniMaxSteps, maxClaudeSteps, maxTokens, verifier };

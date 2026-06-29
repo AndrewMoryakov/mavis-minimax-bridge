@@ -171,7 +171,8 @@ the current baton holder through hardened `duet step --agent <agent> --yes`,
 optionally runs a verifier between running steps, and stops on terminal status,
 limits, token budget, repeated handoff hash, apply failure, or verifier failure.
 When Claude is registered, the loop can spend Anthropic/Claude tokens; keep
-`--max-claude-steps` low.
+the default `--max-claude-steps` at 12 for real work, and lower it explicitly
+for smoke or budget-sensitive runs.
 
 Use `duet report` after a loop or step sequence for a local-only redacted run
 summary: current state, latest loop stop reasons, step counts, token usage,

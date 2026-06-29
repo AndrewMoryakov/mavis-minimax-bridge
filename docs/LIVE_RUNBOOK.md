@@ -114,24 +114,25 @@ repeated handoff hash, apply failure, or verifier failure. With
 `--require-agents`, a premature `done` is recorded as suppressed and handed to
 the next missing required agent; `human_escalation` remains terminal.
 
-For a Claude loop, register Claude and keep its step cap low:
+For a Claude loop, register Claude and use the normal 12-step cap:
 
 ```powershell
-node .\bridge.mjs duet start --goal .\duet-goal.local.md --agents codex,claude --baton codex --max-iterations 8 --max-rounds 4 --max-codex-steps 2 --max-claude-steps 2 --max-tokens 120000
-node .\bridge.mjs duet loop --dry-run --require-agents codex,claude --max-rounds 4 --max-codex-steps 2 --max-claude-steps 2 --max-tokens 120000
-node .\bridge.mjs duet loop --yes --require-agents codex,claude --max-rounds 4 --max-codex-steps 2 --max-claude-steps 2 --max-tokens 120000
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --agents codex,claude --baton codex --max-iterations 12 --max-rounds 12 --max-codex-steps 12 --max-claude-steps 12 --max-tokens 120000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,claude --max-rounds 12 --max-codex-steps 12 --max-claude-steps 12 --max-tokens 120000
+node .\bridge.mjs duet loop --yes --require-agents codex,claude --max-rounds 12 --max-codex-steps 12 --max-claude-steps 12 --max-tokens 120000
 ```
 
 For all three agents:
 
 ```powershell
-node .\bridge.mjs duet start --goal .\duet-goal.local.md --agents codex,minimax,claude --baton codex --max-iterations 12 --max-rounds 6 --max-codex-steps 2 --max-minimax-steps 2 --max-claude-steps 2 --max-tokens 120000
-node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax,claude --max-rounds 6 --max-codex-steps 2 --max-minimax-steps 2 --max-claude-steps 2 --max-tokens 120000
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax,claude --max-rounds 6 --max-codex-steps 2 --max-minimax-steps 2 --max-claude-steps 2 --max-tokens 120000
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --agents codex,minimax,claude --baton codex --max-iterations 12 --max-rounds 12 --max-codex-steps 12 --max-minimax-steps 12 --max-claude-steps 12 --max-tokens 120000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax,claude --max-rounds 12 --max-codex-steps 12 --max-minimax-steps 12 --max-claude-steps 12 --max-tokens 120000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax,claude --max-rounds 12 --max-codex-steps 12 --max-minimax-steps 12 --max-claude-steps 12 --max-tokens 120000
 ```
 
 Claude CLI cost controls are not a hard pre-request cap in every observed
-runtime path. Treat `--max-claude-steps` as the practical safety rail.
+runtime path. Treat `--max-claude-steps` as the practical safety rail and lower
+it explicitly for smoke or budget-sensitive runs.
 
 ## 5. Read The Final Report
 

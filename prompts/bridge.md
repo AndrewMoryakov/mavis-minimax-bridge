@@ -48,8 +48,8 @@ Rules:
   tokens. Prefer `--profile smoke` for compact live validation; smoke defaults
   Codex to `--codex-mode isolated`.
 - Use `duet loop --yes` only after explicit token-spending approval; it can run
-  registered Codex, MiniMax, and Claude steps. Keep `--max-claude-steps` low
-  when Claude participates.
+  registered Codex, MiniMax, and Claude steps. The normal Claude step cap is 12;
+  lower `--max-claude-steps` explicitly for smoke or budget-sensitive runs.
 - Use `duet report` after a loop or step sequence to summarize stop reasons,
   budget diagnostics, usage, verifier results, transcript hashes, and next commands without
   revealing local relay text.

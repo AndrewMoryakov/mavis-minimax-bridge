@@ -268,7 +268,8 @@ MiniMax, or a verifier.
 
 Use `--agents codex,claude` or `--agents codex,minimax,claude` when Claude is a
 participant. Claude can receive manual handoffs, run one `duet step`, or join a
-bounded `duet loop`. Keep `--max-claude-steps` low until the run is trusted.
+bounded `duet loop`. The default Claude step cap is 12 for real work; lower
+`--max-claude-steps` explicitly for smoke or budget-sensitive runs.
 
 Inspect the relay:
 
@@ -364,8 +365,8 @@ Preview or run a bounded autonomous loop:
 ```powershell
 node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
 node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
-node .\bridge.mjs duet loop --yes --require-agents codex,claude --max-rounds 4 --max-codex-steps 2 --max-claude-steps 2 --max-tokens 60000
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax,claude --max-rounds 6 --max-codex-steps 2 --max-minimax-steps 2 --max-claude-steps 2 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,claude --max-rounds 12 --max-codex-steps 12 --max-claude-steps 12 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax,claude --max-rounds 12 --max-codex-steps 12 --max-minimax-steps 12 --max-claude-steps 12 --max-tokens 60000
 node .\bridge.mjs duet loop --dry-run --profile smoke --require-agents codex,minimax
 ```
 
@@ -387,8 +388,8 @@ max rounds, step limits, token budget, repeated handoff hash, apply failure, or
 verifier failure.
 
 Claude CLI cost controls are not a hard pre-request cap in every observed
-runtime path. Keep `--max-claude-steps` low and prefer a dry-run before any
-live loop that includes Claude.
+runtime path. Prefer a dry-run before any live loop that includes Claude, and
+lower `--max-claude-steps` explicitly for smoke or budget-sensitive runs.
 
 Add `--require-agents codex,minimax`, `--require-agents codex,claude`, or
 `--require-agents codex,minimax,claude` when a live loop must not finish until

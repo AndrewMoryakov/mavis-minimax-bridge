@@ -254,7 +254,7 @@ test("duet agents registry routes manual handoffs without hidden minimax fallbac
   const dryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run"]));
   assert.deepEqual(dryRun.limits.agents, ["codex", "claude"]);
   assert.equal(dryRun.nextStep.agent, "codex");
-  assert.equal(dryRun.limits.maxClaudeSteps, 2);
+  assert.equal(dryRun.limits.maxClaudeSteps, 12);
 
   ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--handoff", "handoff.md"]));
   assert.equal(readJson(dir, "duet-state.json").baton, "claude");

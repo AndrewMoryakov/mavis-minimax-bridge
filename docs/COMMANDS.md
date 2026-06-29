@@ -296,8 +296,8 @@ node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
 node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
 node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
-node .\bridge.mjs duet loop --yes --require-agents codex,claude --max-rounds 4 --max-codex-steps 2 --max-claude-steps 2 --max-tokens 60000
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax,claude --max-rounds 6 --max-codex-steps 2 --max-minimax-steps 2 --max-claude-steps 2 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,claude --max-rounds 12 --max-codex-steps 12 --max-claude-steps 12 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax,claude --max-rounds 12 --max-codex-steps 12 --max-minimax-steps 12 --max-claude-steps 12 --max-tokens 60000
 node .\bridge.mjs duet loop --dry-run --profile smoke --require-agents codex,minimax
 node .\bridge.mjs duet report
 node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
@@ -318,8 +318,9 @@ and coordination history.
 Use `--agents codex,minimax`, `--agents codex,claude`, or
 `--agents codex,minimax,claude` to define the relay participants. Manual
 handoffs must stay inside that registry. Claude can participate in manual
-handoffs, `duet step --agent claude --yes`, and bounded `duet loop` runs. Keep
-`--max-claude-steps` low until the run is trusted.
+handoffs, `duet step --agent claude --yes`, and bounded `duet loop` runs. The
+default Claude step cap is 12 for real work; lower `--max-claude-steps`
+explicitly for smoke or budget-sensitive runs.
 
 Use `duet start` when a human wants the simplest safe launch packet. It
 initializes the relay through the same path as `duet init`, then returns
@@ -404,8 +405,8 @@ limits, token budget, repeated handoff hash, apply failure, or verifier
 failure.
 
 Claude CLI cost controls are not a hard pre-request cap in every observed
-runtime path. Keep `--max-claude-steps` low and prefer a dry-run before any
-live loop that includes Claude.
+runtime path. Prefer a dry-run before any live loop that includes Claude, and
+lower `--max-claude-steps` explicitly for smoke or budget-sensitive runs.
 
 Add `--require-agents codex,minimax`, `--require-agents codex,claude`, or
 `--require-agents codex,minimax,claude` to require specific agents before final
