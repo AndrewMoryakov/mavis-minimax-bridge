@@ -37,7 +37,7 @@ repository, not in the goal file.
 Run:
 
 ```powershell
-node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12 --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12 --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 120000
 ```
 
 Use `--baton minimax` if MiniMax should make the first move.
@@ -51,7 +51,7 @@ redacted launch packet with the exact `show`, `next`, `loop --dry-run`,
 Run the dry run from the launch packet:
 
 ```powershell
-node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 120000
 ```
 
 For a shorter smoke validation, use the built-in smoke profile:
@@ -78,7 +78,7 @@ Check:
 If you have a verifier:
 
 ```powershell
-node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000 --verifier .\verify.mjs -- --fast
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 120000 --verifier .\verify.mjs -- --fast
 ```
 
 Verifier files must live inside the bridge root. They run from a scratch working
@@ -90,7 +90,7 @@ not `process.cwd()`.
 After the dry run looks right, explicitly approve the token-spending loop:
 
 ```powershell
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 120000
 ```
 
 For a compact smoke run:
@@ -102,7 +102,7 @@ node .\bridge.mjs duet loop --yes --profile smoke --require-agents codex,minimax
 With a verifier:
 
 ```powershell
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000 --verifier .\verify.mjs -- --fast
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 120000 --verifier .\verify.mjs -- --fast
 ```
 
 The bridge alternates the current baton holder through real agent steps and

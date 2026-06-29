@@ -294,8 +294,8 @@ node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
-node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 60000
 node .\bridge.mjs duet loop --dry-run --profile smoke --require-agents codex,minimax
 node .\bridge.mjs duet report
 node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
@@ -316,8 +316,8 @@ and coordination history.
 Use `--agents codex,minimax`, `--agents codex,claude`, or
 `--agents codex,minimax,claude` to define the relay participants. Manual
 handoffs must stay inside that registry. Claude can participate in manual
-handoffs and `duet step --agent claude --yes`; automatic `duet loop` execution
-for Claude is deferred and reports `unsupported_loop_agent:claude_stage7`.
+handoffs, `duet step --agent claude --yes`, and bounded `duet loop` runs. Keep
+`--max-claude-steps` low until the run is trusted.
 
 Use `duet start` when a human wants the simplest safe launch packet. It
 initializes the relay through the same path as `duet init`, then returns
@@ -388,28 +388,30 @@ loop limits, optional verifier configuration, required-agent settings, and stop
 reasons.
 
 Add `--profile smoke` for compact live validation. It defaults to two rounds,
-one Codex step, one MiniMax step, a smaller packet budget, the standard token
-budget, and `--codex-mode isolated`. Isolated mode uses a scratch read-only
-workspace, not hard security. Explicit `--max-*` and `--codex-mode` flags still
-override the profile.
+one Codex step, one MiniMax step, one Claude step, a smaller packet budget, the
+standard token budget, and `--codex-mode isolated`. Isolated mode uses a
+scratch read-only workspace, not hard security. Explicit `--max-*` and
+`--codex-mode` flags still override the profile.
 
-Use `duet loop --yes` to run a bounded autonomous loop. This can spend both
-Codex/OpenAI and MiniMax tokens. It alternates the current baton holder through
-the same hardened `duet step --agent <agent> --yes` path, optionally runs a
-verifier between running steps, and stops on terminal relay status, max rounds,
-per-agent step limits, token budget, repeated handoff hash, apply failure, or
-verifier failure.
+Use `duet loop --yes` to run a bounded autonomous loop. This can spend
+Codex/OpenAI, MiniMax, and Anthropic/Claude tokens depending on the registered
+agents. It alternates the current baton holder through the same hardened
+`duet step --agent <agent> --yes` path, optionally runs a verifier between
+running steps, and stops on terminal relay status, max rounds, per-agent step
+limits, token budget, repeated handoff hash, apply failure, or verifier
+failure.
 
-Add `--require-agents codex,minimax` to require both agents before final `done`.
-If an early agent returns `done`, the loop records `suppressedTerminalStatus`
-and routes a running handoff to the next missing required agent. It does not
-suppress `human_escalation`.
+Add `--require-agents codex,minimax`, `--require-agents codex,claude`, or
+`--require-agents codex,minimax,claude` to require specific agents before final
+`done`. If an early agent returns `done`, the loop records
+`suppressedTerminalStatus` and routes a running handoff to the next missing
+required agent. It does not suppress `human_escalation`.
 
 Use `duet report` after a loop or step sequence to get a redacted run summary.
 It reads the current relay state and the latest `duet-loop` ledger event, then
 reports stop reasons, step counts, token usage, budget diagnostics, verifier
 summaries, recent `duet-step` provider/model/token/cost totals including Claude
-manual steps, transcript hashes, and suggested continuation commands. It is
+steps, transcript hashes, and suggested continuation commands. It is
 local-only and does not print goal, handoff, or journal text. Claude duet usage
 is shown here only for now; `token-stats --ledger` is unchanged and does not
 merge Claude duet costs in this stage.

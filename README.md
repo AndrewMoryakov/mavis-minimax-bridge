@@ -266,9 +266,8 @@ like `duet init`, then returns a redacted launch packet with `show`, `next`,
 MiniMax, or a verifier.
 
 Use `--agents codex,claude` or `--agents codex,minimax,claude` when Claude is a
-participant. Manual Claude handoffs work; automatic `duet loop` execution for
-Claude is intentionally deferred to the next stage and reports
-`unsupported_loop_agent:claude_stage7`.
+participant. Claude can receive manual handoffs, run one `duet step`, or join a
+bounded `duet loop`. Keep `--max-claude-steps` low until the run is trusted.
 
 Inspect the relay:
 
@@ -299,7 +298,7 @@ node .\bridge.mjs duet transcript export --format markdown --out .\duet-transcri
 see the final state, stop reasons, step counts, token usage, verifier summaries,
 transcript hashes, suggested continuation commands, and the separated budget
 diagnostics for estimated vs actual token usage. It also summarizes recent
-`duet-step` provider/model/token/cost totals, including manual Claude steps;
+`duet-step` provider/model/token/cost totals, including Claude steps;
 `token-stats --ledger` is unchanged and does not merge Claude duet costs yet.
 
 Raw transcript exports require explicit `--raw`; raw file output must use a
@@ -362,8 +361,8 @@ same hardened `duet pass` validation, and redact the answer in stdout unless
 Preview or run a bounded autonomous loop:
 
 ```powershell
-node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 60000
 node .\bridge.mjs duet loop --dry-run --profile smoke --require-agents codex,minimax
 ```
 
@@ -373,10 +372,10 @@ would act next, estimated input tokens, loop limits, verifier configuration,
 and stop reasons such as terminal status or token budget.
 
 Use `--profile smoke` for compact live validation. It defaults to two rounds,
-one Codex step, one MiniMax step, a smaller packet budget, the standard token
-budget, and `--codex-mode isolated` so Codex starts from a scratch read-only
-workspace unless the operator explicitly overrides the mode. Explicit `--max-*`
-and `--codex-mode` flags still override the profile.
+one Codex step, one MiniMax step, one Claude step, a smaller packet budget, the
+standard token budget, and `--codex-mode isolated` so Codex starts from a
+scratch read-only workspace unless the operator explicitly overrides the mode.
+Explicit `--max-*` and `--codex-mode` flags still override the profile.
 
 `duet loop --yes` is token-spending. It alternates the current baton holder
 through the same hardened `duet step --agent <agent> --yes` path, optionally
@@ -384,9 +383,10 @@ runs a verifier between running steps, and stops on `done`, `human_escalation`,
 max rounds, step limits, token budget, repeated handoff hash, apply failure, or
 verifier failure.
 
-Add `--require-agents codex,minimax` when a live loop must not finish until both
-agents have contributed. A premature `done` is recorded and routed to the next
-missing required agent; `human_escalation` always remains terminal.
+Add `--require-agents codex,minimax`, `--require-agents codex,claude`, or
+`--require-agents codex,minimax,claude` when a live loop must not finish until
+specific agents have contributed. A premature `done` is recorded and routed to
+the next missing required agent; `human_escalation` always remains terminal.
 
 After a loop stops, run:
 
@@ -399,7 +399,7 @@ The report is safe to inspect by default: it summarizes the latest `duet-loop`
 ledger event and current relay state without printing local goal, handoff, or
 journal text. It separates relay terminal status from loop stop reasons and
 includes a `budget` block with estimated input, actual usage where available,
-and any budget violation. Recent manual Claude step costs are shown in the
+and any budget violation. Recent Claude step costs are shown in the
 report usage section only; they are intentionally not merged into
 `token-stats --ledger` in this stage.
 

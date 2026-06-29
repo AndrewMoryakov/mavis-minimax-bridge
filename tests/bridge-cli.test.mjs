@@ -254,13 +254,16 @@ test("duet agents registry routes manual handoffs without hidden minimax fallbac
   const dryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run"]));
   assert.deepEqual(dryRun.limits.agents, ["codex", "claude"]);
   assert.equal(dryRun.nextStep.agent, "codex");
+  assert.equal(dryRun.limits.maxClaudeSteps, 4);
 
   ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--handoff", "handoff.md"]));
   assert.equal(readJson(dir, "duet-state.json").baton, "claude");
 
   const claudeDryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run"]));
-  assert.equal(claudeDryRun.wouldRunLoop, false);
-  assert.ok(claudeDryRun.stopReasons.includes("unsupported_loop_agent:claude_stage7"));
+  assert.equal(claudeDryRun.wouldRunLoop, true);
+  assert.equal(claudeDryRun.nextStep.agent, "claude");
+  assert.equal(claudeDryRun.nextStep.mode, "claude-live");
+  assert.equal(claudeDryRun.nextStep.route.provider, "anthropic");
 
   fails(
     runBridge(dir, ["duet", "pass", "--from", "claude", "--to", "minimax", "--handoff", "handoff.md"]),
@@ -527,10 +530,15 @@ test("duet step claude dry-run and live fake step are manual-only", (t) => {
   assert.ok(dryRun.warnings.includes("claude.cli.missing"));
 
   const claudeLoopDryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run"]));
-  assert.equal(claudeLoopDryRun.wouldRunLoop, false);
-  assert.ok(claudeLoopDryRun.stopReasons.includes("unsupported_loop_agent:claude_stage7"));
+  assert.equal(claudeLoopDryRun.wouldRunLoop, true);
+  assert.equal(claudeLoopDryRun.nextStep.agent, "claude");
+  assert.equal(claudeLoopDryRun.nextStep.mode, "claude-live");
+  assert.equal(claudeLoopDryRun.nextStep.route.provider, "anthropic");
 
   ok(runBridge(dir, ["config", "set", "--key", "claudeRequireAvailable", "--value", "true"]));
+  const strictClaudeLoopDryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run"]));
+  assert.equal(strictClaudeLoopDryRun.wouldRunLoop, false);
+  assert.ok(strictClaudeLoopDryRun.stopReasons.includes("claude.cli.missing"));
   fails(
     runBridge(dir, ["duet", "step", "--agent", "claude", "--dry-run"]),
     /claudeRequireAvailable=true/,
@@ -956,6 +964,63 @@ test("duet loop yes applies fake steps until done without leaking by default", (
   assert.equal(state.status, "done");
   assert.equal(state.baton, null);
   assert.match(state.lastHandoff, new RegExp(secret));
+});
+
+test("duet loop yes runs registered codex claude loop with fake Claude CLI", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_CODEX_CLAUDE_LOOP_123";
+  const claudeCli = writeFakeClaudeShim(dir, "handoff_codex");
+  writeFile(dir, "goal.md", `Codex Claude loop goal ${secret}`);
+
+  ok(runBridge(dir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(claudeCli)]));
+  ok(runBridge(dir, [
+    "duet",
+    "init",
+    "--goal",
+    "goal.md",
+    "--agents",
+    "codex,claude",
+    "--baton",
+    "codex",
+    "--max-iterations",
+    "5",
+  ]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: running\n\nCodex fake handoff ${secret}.`,
+  };
+  const result = ok(runBridge(dir, [
+    "duet",
+    "loop",
+    "--yes",
+    "--max-rounds",
+    "2",
+    "--max-codex-steps",
+    "1",
+    "--max-claude-steps",
+    "1",
+  ], { env }));
+  assert.equal(result.event, "duet-loop");
+  assert.equal(result.status, "running");
+  assert.deepEqual(result.stopReasons, ["max_rounds:2"]);
+  assert.equal(result.counts.codexSteps, 1);
+  assert.equal(result.counts.minimaxSteps, 0);
+  assert.equal(result.counts.claudeSteps, 1);
+  assert.deepEqual(result.counts.agentSteps, { codex: 1, claude: 1 });
+  assert.equal(result.steps[0].agent, "codex");
+  assert.equal(result.steps[0].applyStatus, "applied");
+  assert.equal(result.steps[1].agent, "claude");
+  assert.equal(result.steps[1].provider, "anthropic");
+  assert.equal(result.steps[1].applyStatus, "applied");
+  assert.equal(result.limits.maxClaudeSteps, 1);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.status, "running");
+  assert.equal(state.baton, "codex");
+  assert.deepEqual(state.agents, ["codex", "claude"]);
 });
 
 test("duet loop yes suppresses premature done until required agents contribute", (t) => {
