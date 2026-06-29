@@ -45,14 +45,14 @@ Add conservative config fields:
 - `claudeRunnerTimeoutMs`: default `60000`.
 - `claudeRequireAvailable`: default `false`.
 - `claudeModel`: default `null`.
-- `claudeMaxTurns`: default `1`.
+- `claudeMaxTurns`: default `12`.
 - `claudeMaxBudgetUsd`: default `null`.
 - `claudePermissionMode`: default `"deny"`.
 
 Validation rules:
 
 - Timeouts must be positive integers.
-- `claudeMaxTurns` must be an integer from 1 to 10.
+- `claudeMaxTurns` must be an integer from 1 to 50.
 - `claudeMaxBudgetUsd` may be null or a positive number.
 - `claudePermissionMode` is one of `"deny"`, `"plan"`, `"default"`.
 - Empty strings normalize to null for nullable string fields.
@@ -121,7 +121,7 @@ concurrent calls do not share mutable runner state.
 MVP-A no-tools command:
 
 ```text
-claude --print --input-format stream-json --output-format stream-json --verbose --max-turns 1
+claude --print --input-format stream-json --output-format stream-json --verbose --max-turns 12
 ```
 
 Optional flags:

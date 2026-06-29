@@ -180,8 +180,10 @@ node .\bridge.mjs duet step --agent codex --yes --codex-mode isolated
 
 `--yes` authorizes one token-spending agent call. MiniMax steps use the
 review-only MiniMax path. Codex steps run a separate `codex exec` process with
-`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, explicit `--cd`, and a
-bridge timeout. `--codex-mode exec` keeps the old bridge-workspace
+`--ephemeral`, explicit `--cd`, explicit `approval_policy='never'`, and a
+bridge timeout. The child Codex process still loads the user's Codex config and
+rules; current Codex CLI builds require that for `workspace-write` to take
+effect. `--codex-mode exec` keeps the old bridge-workspace
 `workspace-write` behavior; `--codex-mode isolated` uses an empty scratch
 workspace, `read-only` sandboxing, and `--skip-git-repo-check`. It reduces
 workspace exposure, but it is not a hard security boundary. The bridge stores the answer as a pending

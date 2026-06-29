@@ -35,7 +35,7 @@ test("normalizeConfig merges env defaults and dedupes deny sessions", () => {
   assert.equal(config.claudeRunnerTimeoutMs, 60000);
   assert.equal(config.claudeRequireAvailable, false);
   assert.equal(config.claudeModel, null);
-  assert.equal(config.claudeMaxTurns, 1);
+  assert.equal(config.claudeMaxTurns, 12);
   assert.equal(config.claudeMaxBudgetUsd, null);
   assert.equal(config.claudePermissionMode, "deny");
 });
@@ -71,7 +71,7 @@ test("validateConfig rejects invalid config shapes", () => {
   assert.throws(() => normalizeConfig({ claudeRequireAvailable: "yes" }), /claudeRequireAvailable/);
   assert.throws(() => normalizeConfig({ claudeModel: 123 }), /claudeModel/);
   assert.throws(() => normalizeConfig({ claudeMaxTurns: 0 }), /claudeMaxTurns/);
-  assert.throws(() => normalizeConfig({ claudeMaxTurns: 11 }), /claudeMaxTurns/);
+  assert.throws(() => normalizeConfig({ claudeMaxTurns: 51 }), /claudeMaxTurns/);
   assert.throws(() => normalizeConfig({ claudeMaxTurns: 1.5 }), /claudeMaxTurns/);
   assert.throws(() => normalizeConfig({ claudeMaxBudgetUsd: 0 }), /claudeMaxBudgetUsd/);
   assert.throws(() => normalizeConfig({ claudePermissionMode: "allow" }), /claudePermissionMode/);

@@ -98,15 +98,34 @@ if (mode === "stderr_secret") {
   process.exit(0);
 }
 
-if (mode === "handoff_codex" || mode === "handoff_minimax" || mode === "handoff_invalid_next" || mode === "handoff_codex_error") {
-  const next = mode === "handoff_codex" || mode === "handoff_codex_error" ? "codex" : mode === "handoff_minimax" ? "minimax" : "claude";
+if (
+  mode === "handoff_codex"
+  || mode === "handoff_minimax"
+  || mode === "handoff_invalid_next"
+  || mode === "handoff_codex_error"
+  || mode === "handoff_done_preface"
+  || mode === "handoff_running_preface"
+  || mode === "handoff_running_missing_next"
+) {
+  const next = mode === "handoff_codex" || mode === "handoff_codex_error" || mode === "handoff_running_preface"
+    ? "codex"
+    : mode === "handoff_minimax"
+      ? "minimax"
+      : "claude";
+  const text = mode === "handoff_done_preface"
+    ? "I reviewed the files first.\n\nStatus: running\nNext-Agent: codex\n\nEarlier draft.\n\nStatus: done\n\nFinal Claude done handoff."
+    : mode === "handoff_running_preface"
+      ? "I reviewed the packet before the formal handoff.\n\nStatus: running\nNext-Agent: codex\n\nClaude prefaced running handoff."
+      : mode === "handoff_running_missing_next"
+        ? "Some review text.\n\nStatus: running\n\nMissing next agent."
+        : `Status: running\nNext-Agent: ${next}\n\nClaude fake handoff for ${next}.`;
   writeJson({ type: "system", subtype: "init", session_id: `claude-fixture-${mode}`, model: "fake-claude" });
   writeJson({
     type: "assistant",
     message: {
       content: [{
         type: "text",
-        text: `Status: running\nNext-Agent: ${next}\n\nClaude fake handoff for ${next}.`,
+        text,
       }],
     },
   });

@@ -19,7 +19,6 @@ import { makeMvsClient } from "./lib/mvs-client.mjs";
 import { buildClaudeArgs, resolveClaudeCli, runClaudePrompt } from "./lib/claude-code.mjs";
 import {
   codexIsolationWarning,
-  codexPromptPathForOutput,
   lastCodexUsage,
   parseCodexJsonEvents,
   requireCodexMode,
@@ -451,6 +450,18 @@ function quoteCmd(value) {
   return `"${text.replace(/(["^&|<>()%])/g, "^$1")}"`;
 }
 
+function spawnCommandForShellShim(command, commandArgs) {
+  const lower = String(command || "").toLowerCase();
+  if (process.platform === "win32" && (lower.endsWith(".cmd") || lower.endsWith(".bat"))) {
+    return {
+      command: process.env.ComSpec || "cmd.exe",
+      args: ["/d", "/c", ["call", quoteCmd(command), ...commandArgs.map(quoteCmd)].join(" ")],
+      windowsVerbatimArguments: true,
+    };
+  }
+  return { command, args: commandArgs, windowsVerbatimArguments: false };
+}
+
 function readLongPrompt(args) {
   const longPromptPath = argValue(args, "--long-prompt");
   if (!longPromptPath) return null;
@@ -640,7 +651,33 @@ function safeRmSync(targetPath, options = {}) {
 }
 
 function codexExecEnv() {
-  return verifierEnv();
+  const allow = [
+    "PATH",
+    "Path",
+    "PATHEXT",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "ComSpec",
+    "HOME",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "USERNAME",
+    "USERDOMAIN",
+    "OS",
+    "WINDIR",
+    "CODEX_HOME",
+  ];
+  const env = {};
+  for (const key of allow) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  env.NODE_OPTIONS = "";
+  return env;
 }
 
 function readTrustedText(filePath, label, maxChars = null, options = {}) {
@@ -668,15 +705,30 @@ function renderDuetUserText(text) {
 }
 
 function parseTrustedStatusLine(answer) {
-  const lines = String(answer || "").split(/\r?\n/);
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    const explicit = line.match(/^\s*status\s*:\s*(running|done|human_escalation)\s*$/i);
-    if (explicit) return explicit[1].toLowerCase();
-    const bare = line.match(/^\s*(running|done|human_escalation)\s*$/i);
-    return bare ? bare[1].toLowerCase() : null;
-  }
+  const handoff = extractDuetHandoff(answer);
+  if (handoff) return handoff.status;
   return null;
+}
+
+function extractDuetHandoff(answer) {
+  const lines = String(answer || "").split(/\r?\n/);
+  const explicit = [];
+  let firstBare = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const status = line.match(/^\s*status\s*:\s*(running|done|human_escalation)\s*$/i);
+    if (status) explicit.push({ index, status: status[1].toLowerCase() });
+    if (firstBare === null) {
+      const bare = line.match(/^\s*(running|done|human_escalation)\s*$/i);
+      if (bare) firstBare = { index, status: bare[1].toLowerCase() };
+    }
+  }
+  const selected = explicit.length ? explicit[explicit.length - 1] : firstBare;
+  if (!selected) return null;
+  return {
+    status: selected.status,
+    text: lines.slice(selected.index).join("\n").trim(),
+  };
 }
 
 function buildAskSourceContext(args, taskPaths = []) {
@@ -3003,6 +3055,18 @@ function fakeModelReplyFromEnv() {
   return String(process.env.MAVIS_BRIDGE_TEST_MODEL_REPLY);
 }
 
+function codexExecConfigArgs(workspace) {
+  if (!["read-only", "workspace-write"].includes(workspace.sandbox)) {
+    throw new Error(`refusing approval_policy=never with unsupported codex sandbox: ${workspace.sandbox}`);
+  }
+  return [
+    "-c",
+    "approval_policy='never'",
+    "-c",
+    "shell_environment_policy.inherit='all'",
+  ];
+}
+
 function publicModelTurns(turns, raw) {
   if (raw) return turns;
   return turns.map((turn) => {
@@ -3178,13 +3242,12 @@ async function runCodexExecTurn(promptText, envelope, outputPath, options = {}) 
   fs.mkdirSync(workspace.workspace, { recursive: true });
   const codexArgs = [
     "exec",
+    ...codexExecConfigArgs(workspace),
     "--cd",
     workspace.workspace,
     "--sandbox",
     workspace.sandbox,
     "--ephemeral",
-    "--ignore-user-config",
-    "--ignore-rules",
     ...(workspace.skipGitRepoCheck ? ["--skip-git-repo-check"] : []),
     "--json",
     "--output-last-message",
@@ -3196,42 +3259,17 @@ async function runCodexExecTurn(promptText, envelope, outputPath, options = {}) 
     let stdout = "";
     let stderr = "";
     let settled = false;
-    let promptPath = null;
-    let spawnFile = cli;
-    let spawnArgs = codexArgs;
-    if (process.platform === "win32") {
-      promptPath = codexPromptPathForOutput(outputPath);
-      fs.writeFileSync(promptPath, promptText, "utf8");
-      spawnFile = "powershell.exe";
-      spawnArgs = [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        path.join(bridgeDir, "scripts", "run-codex-exec.ps1"),
-        "-CodexCli",
-        cli,
-        "-Workspace",
-        workspace.workspace,
-        "-Sandbox",
-        workspace.sandbox,
-        "-OutputLastMessage",
-        outputPath,
-        "-PromptPath",
-        promptPath,
-        ...(workspace.skipGitRepoCheck ? ["-SkipGitRepoCheck"] : []),
-      ];
-    }
-    const child = spawn(spawnFile, spawnArgs, {
+    const spawnCommand = spawnCommandForShellShim(cli, codexArgs);
+    const child = spawn(spawnCommand.command, spawnCommand.args, {
       cwd: workspace.workspace,
       env: codexExecEnv(),
       windowsHide: true,
+      windowsVerbatimArguments: Boolean(spawnCommand.windowsVerbatimArguments),
       stdio: ["pipe", "pipe", "pipe"],
     });
     const timer = setTimeout(() => {
       settled = true;
       terminateChildProcessTree(child);
-      if (promptPath) safeRmSync(promptPath);
       if (workspace.cleanup) safeRmSync(workspace.workspace, { recursive: true });
       reject(new Error(`codex exec timed out after ${timeoutSec}s`));
     }, timeoutSec * 1000);
@@ -3248,7 +3286,6 @@ async function runCodexExecTurn(promptText, envelope, outputPath, options = {}) 
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (promptPath) safeRmSync(promptPath);
       if (workspace.cleanup) safeRmSync(workspace.workspace, { recursive: true });
       reject(error);
     });
@@ -3256,7 +3293,6 @@ async function runCodexExecTurn(promptText, envelope, outputPath, options = {}) 
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (promptPath) safeRmSync(promptPath);
       if (workspace.cleanup) safeRmSync(workspace.workspace, { recursive: true });
       const events = parseCodexJsonEvents(stdout);
       const usage = lastCodexUsage(events);
@@ -3289,13 +3325,15 @@ async function runCodexExecTurn(promptText, envelope, outputPath, options = {}) 
           workspaceMode: workspace.codexMode,
           workspaceSandbox: workspace.sandbox,
           skipGitRepoCheck: workspace.skipGitRepoCheck,
+          approvalPolicy: "never",
+          shellEnvironmentInherit: "all",
         },
       });
     });
     child.stdin.on("error", () => {
       // A fast-exiting codex process can close stdin before the prompt is written.
     });
-    child.stdin.end(process.platform === "win32" ? "" : promptText);
+    child.stdin.end(promptText);
   });
 }
 
@@ -3536,13 +3574,15 @@ async function runDuetStepLive(args, options = {}) {
       : await runClaudeDuetTurn(promptText, envelope);
 
   const answer = modelRun.answer || "";
+  const extractedHandoff = extractDuetHandoff(answer);
+  const handoffAnswer = extractedHandoff?.text || answer;
   const modelStatus = parseDuetStepStatus(answer);
   if (agent === "minimax" || agent === "claude" || !fs.existsSync(pendingPath) || !answer.trim()) {
     const fallbackAgent = agent === "minimax" ? "MiniMax" : agent === "claude" ? "Claude" : "Codex";
-    fs.writeFileSync(pendingPath, answer.trim() || `Status: running\n\n${fallbackAgent} returned an empty handoff.`, "utf8");
+    fs.writeFileSync(pendingPath, handoffAnswer.trim() || `Status: running\n\n${fallbackAgent} returned an empty handoff.`, "utf8");
   }
   let status = modelStatus;
-  let passTo = agent === "claude" ? parseClaudeNextAgent(answer) : nextDuetAgent(stateBefore, agent);
+  let passTo = agent === "claude" ? parseClaudeNextAgent(handoffAnswer) : nextDuetAgent(stateBefore, agent);
   const claudeRunFailed = agent === "claude" && (
     Boolean(modelRun.signals?.isError) ||
     Boolean(modelRun.signals?.timedOut) ||

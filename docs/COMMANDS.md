@@ -375,8 +375,10 @@ pending handoff path is returned for manual recovery.
 
 Use `duet step --agent codex --yes` to run one real non-interactive Codex relay
 turn. This can spend OpenAI/Codex tokens. The bridge invokes `codex exec` with
-`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, explicit `--cd`, and a
-bridge timeout. `--codex-mode exec` runs in the bridge workspace with
+`--ephemeral`, explicit `--cd`, explicit `approval_policy='never'`, and a
+bridge timeout. The child Codex process still loads the user's Codex config and
+rules; current Codex CLI builds require that for `workspace-write` to take
+effect. `--codex-mode exec` runs in the bridge workspace with
 `workspace-write`; `--codex-mode isolated` runs in an empty scratch workspace
 with `read-only` and `--skip-git-repo-check`. This reduces workspace exposure,
 but it is not a hard security boundary. Exec mode can modify bridge repository

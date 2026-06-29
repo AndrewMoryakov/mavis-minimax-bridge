@@ -57,6 +57,21 @@ function writeFakeClaudeShim(dir, mode) {
   return cliPath;
 }
 
+function writeFakeCodexShim(dir) {
+  const cliPath = path.join(dir, "fake codex shim.cmd");
+  const fakeCodex = path.join(repoRoot, "tests", "helpers", "fake-codex.mjs");
+  fs.writeFileSync(
+    cliPath,
+    [
+      "@echo off",
+      `"${process.execPath}" "${fakeCodex}" %*`,
+      "",
+    ].join("\r\n"),
+    "utf8",
+  );
+  return cliPath;
+}
+
 function runBridge(dir, args, options = {}) {
   return runBridgeScript(path.join(dir, "bridge.mjs"), dir, args, options);
 }
@@ -580,6 +595,41 @@ test("duet step claude dry-run and live fake step are manual-only", (t) => {
   fails(invalid, /Next-Agent: codex/);
   assert.equal(fs.readFileSync(path.join(invalidDir, "duet-state.json"), "utf8"), stateBefore);
 
+  const prefaceDoneDir = sandbox(t);
+  writeFile(prefaceDoneDir, "goal.md", "Claude preface done goal");
+  const prefaceDoneCli = writeFakeClaudeShim(prefaceDoneDir, "handoff_done_preface");
+  ok(runBridge(prefaceDoneDir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(prefaceDoneCli)]));
+  ok(runBridge(prefaceDoneDir, ["duet", "start", "--goal", "goal.md", "--baton", "claude", "--max-iterations", "3"]));
+  const prefaceDone = ok(runBridge(prefaceDoneDir, ["duet", "step", "--agent", "claude", "--yes"]));
+  assert.equal(prefaceDone.applyStatus, "applied");
+  assert.equal(prefaceDone.status, "done");
+  assert.equal(prefaceDone.state.status, "done");
+  assert.equal(prefaceDone.state.baton, null);
+  const prefaceDoneText = fs.readFileSync(prefaceDone.appliedPath, "utf8");
+  assert.match(prefaceDoneText, /^Status: done/m);
+  assert.doesNotMatch(prefaceDoneText, /Earlier draft/);
+
+  const prefaceRunningDir = sandbox(t);
+  writeFile(prefaceRunningDir, "goal.md", "Claude preface running goal");
+  const prefaceRunningCli = writeFakeClaudeShim(prefaceRunningDir, "handoff_running_preface");
+  ok(runBridge(prefaceRunningDir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(prefaceRunningCli)]));
+  ok(runBridge(prefaceRunningDir, ["duet", "start", "--goal", "goal.md", "--agents", "codex,claude", "--baton", "claude", "--max-iterations", "3"]));
+  const prefaceRunning = ok(runBridge(prefaceRunningDir, ["duet", "step", "--agent", "claude", "--yes"]));
+  assert.equal(prefaceRunning.applyStatus, "applied");
+  assert.equal(prefaceRunning.status, "running");
+  assert.equal(prefaceRunning.state.baton, "codex");
+  assert.match(fs.readFileSync(prefaceRunning.appliedPath, "utf8"), /^Status: running\nNext-Agent: codex/m);
+
+  const missingNextDir = sandbox(t);
+  writeFile(missingNextDir, "goal.md", "Claude missing next goal");
+  const missingNextCli = writeFakeClaudeShim(missingNextDir, "handoff_running_missing_next");
+  ok(runBridge(missingNextDir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(missingNextCli)]));
+  ok(runBridge(missingNextDir, ["duet", "start", "--goal", "goal.md", "--agents", "codex,claude", "--baton", "claude", "--max-iterations", "3"]));
+  const missingNextStateBefore = fs.readFileSync(path.join(missingNextDir, "duet-state.json"), "utf8");
+  const missingNext = runBridge(missingNextDir, ["duet", "step", "--agent", "claude", "--yes"]);
+  fails(missingNext, /Next-Agent: codex/);
+  assert.equal(fs.readFileSync(path.join(missingNextDir, "duet-state.json"), "utf8"), missingNextStateBefore);
+
   const errorDir = sandbox(t);
   writeFile(errorDir, "goal.md", "Claude error result goal");
   const errorCli = writeFakeClaudeShim(errorDir, "handoff_codex_error");
@@ -672,6 +722,42 @@ test("duet step codex yes applies a fake exec handoff without leaking by default
   assert.equal(fs.existsSync(result.appliedPath), true);
   const ledger = fs.readFileSync(path.join(dir, "ledger.jsonl"), "utf8");
   assert.match(ledger, /"agent":"codex"/);
+});
+
+test("duet step codex yes invokes cmd shim through stdin with bounded inherited env", (t) => {
+  const dir = sandboxWithSpace(t);
+  const secret = "SECRET_CODEX_ENV_TOKEN_123";
+  const codexCli = writeFakeCodexShim(dir);
+  writeFile(dir, "goal.md", "Codex shim integration goal");
+
+  ok(runBridge(dir, ["config", "set", "--key", "codexCli", "--value", JSON.stringify(codexCli)]));
+  ok(runBridge(dir, ["duet", "init", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "3"]));
+  const result = ok(runBridge(dir, ["duet", "step", "--agent", "codex", "--yes"], {
+    env: {
+      ...process.env,
+      MAVIS_FAKE_SECRET_TOKEN: secret,
+      NODE_OPTIONS: "--no-warnings",
+    },
+  }));
+  assert.equal(result.applyStatus, "applied");
+  assert.equal(result.state.baton, "minimax");
+  assert.equal(result.diagnostics, undefined);
+
+  const outputArg = result.appliedPath.replace(/\.applied\.local\.md$/, ".pending.local.md");
+  const capturePath = `${outputArg}.capture.json`;
+  const capture = JSON.parse(fs.readFileSync(capturePath, "utf8"));
+  assert.equal(capture.args[0], "exec");
+  assert.deepEqual(capture.args.slice(1, 5), ["-c", "approval_policy='never'", "-c", "shell_environment_policy.inherit='all'"]);
+  assert.ok(capture.args.includes("--sandbox"));
+  assert.equal(capture.args[capture.args.indexOf("--sandbox") + 1], "workspace-write");
+  assert.ok(capture.args.includes("--output-last-message"));
+  assert.equal(capture.args.includes("--ignore-user-config"), false);
+  assert.equal(capture.args.includes("--ignore-rules"), false);
+  assert.match(capture.stdin, /Codex shim integration goal/);
+  assert.notEqual(capture.env.USERPROFILE || capture.env.HOME, "");
+  assert.equal(capture.env.NODE_OPTIONS, "");
+  assert.equal(capture.env.MAVIS_FAKE_SECRET_TOKEN, null);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
 });
 
 test("duet step codex isolated yes applies a fake handoff and reports codex mode", (t) => {
