@@ -41,6 +41,22 @@ function readJson(dir, name) {
   return JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
 }
 
+function writeFakeClaudeShim(dir, mode) {
+  const cliPath = path.join(dir, `fake-claude-${mode}.cmd`);
+  const fakeClaude = path.join(repoRoot, "tests", "helpers", "fake-claude.mjs");
+  fs.writeFileSync(
+    cliPath,
+    [
+      "@echo off",
+      `set FAKE_CLAUDE_MODE=${mode}`,
+      `"${process.execPath}" "${fakeClaude}" %*`,
+      "",
+    ].join("\r\n"),
+    "utf8",
+  );
+  return cliPath;
+}
+
 function runBridge(dir, args, options = {}) {
   return runBridgeScript(path.join(dir, "bridge.mjs"), dir, args, options);
 }
@@ -445,7 +461,7 @@ test("duet step codex dry-run validates baton and spends no tokens", (t) => {
   fails(runBridge(dir, ["duet", "step", "--agent", "codex", "--dry-run", "--codex-mode"]), /--codex-mode requires isolated or exec/);
 });
 
-test("duet step claude dry-run is manual-only and respects strict availability", (t) => {
+test("duet step claude dry-run and live fake step are manual-only", (t) => {
   const dir = sandbox(t);
   const missingCli = path.join(dir, "missing", "claude.cmd");
   writeFile(dir, "goal.md", "Claude manual dry-run goal");
@@ -474,10 +490,6 @@ test("duet step claude dry-run is manual-only and respects strict availability",
   assert.ok(dryRun.warnings.includes("claude.cli.missing"));
 
   fails(
-    runBridge(dir, ["duet", "step", "--agent", "claude", "--yes"]),
-    /Stage 4/,
-  );
-  fails(
     runBridge(dir, ["duet", "loop", "--dry-run"]),
     /state\.baton must be one of: codex, minimax/,
   );
@@ -487,6 +499,51 @@ test("duet step claude dry-run is manual-only and respects strict availability",
     runBridge(dir, ["duet", "step", "--agent", "claude", "--dry-run"]),
     /claudeRequireAvailable=true/,
   );
+
+  const codexDir = sandbox(t);
+  writeFile(codexDir, "goal.md", "Claude live codex goal");
+  writeFile(codexDir, "handoff.md", "Manual handoff to Claude");
+  const codexCli = writeFakeClaudeShim(codexDir, "handoff_codex");
+  ok(runBridge(codexDir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(codexCli)]));
+  ok(runBridge(codexDir, ["duet", "start", "--goal", "goal.md", "--baton", "codex", "--max-iterations", "3"]));
+  ok(runBridge(codexDir, ["duet", "pass", "--from", "codex", "--to", "claude", "--handoff", "handoff.md"]));
+  const codexLive = ok(runBridge(codexDir, ["duet", "step", "--agent", "claude", "--yes"]));
+  assert.equal(codexLive.agent, "claude");
+  assert.equal(codexLive.mode, "claude-live");
+  assert.equal(codexLive.provider, "anthropic");
+  assert.equal(codexLive.applyStatus, "applied");
+  assert.equal(codexLive.entries[0].costUsd, 0.0042);
+  assert.equal(codexLive.state.baton, "codex");
+  assert.match(fs.readFileSync(codexLive.appliedPath, "utf8"), /Next-Agent: codex/);
+
+  const minimaxDir = sandbox(t);
+  writeFile(minimaxDir, "goal.md", "Claude live minimax goal");
+  const minimaxCli = writeFakeClaudeShim(minimaxDir, "handoff_minimax");
+  ok(runBridge(minimaxDir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(minimaxCli)]));
+  ok(runBridge(minimaxDir, ["duet", "start", "--goal", "goal.md", "--baton", "claude", "--max-iterations", "3"]));
+  const minimaxLive = ok(runBridge(minimaxDir, ["duet", "step", "--agent", "claude", "--yes"]));
+  assert.equal(minimaxLive.applyStatus, "applied");
+  assert.equal(minimaxLive.state.baton, "minimax");
+
+  const invalidDir = sandbox(t);
+  writeFile(invalidDir, "goal.md", "Claude invalid next goal");
+  const invalidCli = writeFakeClaudeShim(invalidDir, "handoff_invalid_next");
+  ok(runBridge(invalidDir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(invalidCli)]));
+  ok(runBridge(invalidDir, ["duet", "start", "--goal", "goal.md", "--baton", "claude", "--max-iterations", "3"]));
+  const stateBefore = fs.readFileSync(path.join(invalidDir, "duet-state.json"), "utf8");
+  const invalid = runBridge(invalidDir, ["duet", "step", "--agent", "claude", "--yes"]);
+  fails(invalid, /Next-Agent: codex/);
+  assert.equal(fs.readFileSync(path.join(invalidDir, "duet-state.json"), "utf8"), stateBefore);
+
+  const errorDir = sandbox(t);
+  writeFile(errorDir, "goal.md", "Claude error result goal");
+  const errorCli = writeFakeClaudeShim(errorDir, "handoff_codex_error");
+  ok(runBridge(errorDir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(errorCli)]));
+  ok(runBridge(errorDir, ["duet", "start", "--goal", "goal.md", "--baton", "claude", "--max-iterations", "3"]));
+  const errorStateBefore = fs.readFileSync(path.join(errorDir, "duet-state.json"), "utf8");
+  const errored = runBridge(errorDir, ["duet", "step", "--agent", "claude", "--yes"]);
+  fails(errored, /Claude live step failed: error_max_budget_usd/);
+  assert.equal(fs.readFileSync(path.join(errorDir, "duet-state.json"), "utf8"), errorStateBefore);
 
   const direct = sandbox(t);
   writeFile(direct, "goal.md", "Direct Claude baton goal");
@@ -1478,7 +1535,7 @@ test("config accepts claudeCli and doctor reports configured Claude shim", (t) =
   const cliDir = path.join(dir, "Claude CLI");
   fs.mkdirSync(cliDir);
   const cliPath = path.join(cliDir, "claude.cmd");
-  fs.writeFileSync(cliPath, "@echo off\r\n", "utf8");
+  fs.writeFileSync(cliPath, "@echo off\r\necho 2.1.195 Fake Claude Code\r\n", "utf8");
 
   const updated = ok(runBridge(dir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(cliPath)]));
   assert.equal(updated.event, "config-updated");

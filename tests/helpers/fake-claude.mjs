@@ -8,6 +8,11 @@ const fixtureDir = path.resolve(here, "..", "fixtures", "claude");
 const mode = process.env.FAKE_CLAUDE_MODE || "happy";
 const delayMs = Number(process.env.FAKE_CLAUDE_DELAY_MS || 100000);
 
+if (process.argv.includes("--version")) {
+  process.stdout.write("2.1.195 (Fake Claude Code)\n");
+  process.exit(0);
+}
+
 function writeFixture(name) {
   process.stdout.write(fs.readFileSync(path.join(fixtureDir, name), "utf8"));
   if (!process.stdout.writableEnded) process.stdout.write("\n");
@@ -91,6 +96,35 @@ if (mode === "stderr_secret") {
   writeJson({ type: "system", subtype: "init", session_id: "claude-fixture-secret", model: "fake" });
   writeJson({ type: "result", subtype: "success", is_error: false, total_cost_usd: 0, num_turns: 1 });
   process.exit(0);
+}
+
+if (mode === "handoff_codex" || mode === "handoff_minimax" || mode === "handoff_invalid_next" || mode === "handoff_codex_error") {
+  const next = mode === "handoff_codex" || mode === "handoff_codex_error" ? "codex" : mode === "handoff_minimax" ? "minimax" : "claude";
+  writeJson({ type: "system", subtype: "init", session_id: `claude-fixture-${mode}`, model: "fake-claude" });
+  writeJson({
+    type: "assistant",
+    message: {
+      content: [{
+        type: "text",
+        text: `Status: running\nNext-Agent: ${next}\n\nClaude fake handoff for ${next}.`,
+      }],
+    },
+  });
+  writeJson({
+    type: "result",
+    subtype: mode === "handoff_codex_error" ? "error_max_budget_usd" : "success",
+    is_error: mode === "handoff_codex_error",
+    total_cost_usd: 0.0042,
+    num_turns: 1,
+    session_id: `claude-fixture-${mode}`,
+    usage: {
+      input_tokens: 111,
+      output_tokens: 22,
+      cache_read_tokens: 3,
+      cache_creation_tokens: 4,
+    },
+  });
+  process.exit(mode === "handoff_codex_error" ? 1 : 0);
 }
 
 if (mode === "timeout") {

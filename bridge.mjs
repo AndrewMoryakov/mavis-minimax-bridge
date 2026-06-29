@@ -16,7 +16,7 @@ import { makeSourceContext, readSourceSnippet } from "./lib/source-context.mjs";
 import { makeVerifier, verifierArgs, verifierEnv } from "./lib/verifier.mjs";
 import { fetchJson, fetchJsonWithTimeout } from "./lib/http-json.mjs";
 import { makeMvsClient } from "./lib/mvs-client.mjs";
-import { buildClaudeArgs, resolveClaudeCli } from "./lib/claude-code.mjs";
+import { buildClaudeArgs, resolveClaudeCli, runClaudePrompt } from "./lib/claude-code.mjs";
 import {
   codexIsolationWarning,
   codexPromptPathForOutput,
@@ -191,7 +191,7 @@ function fullUsage() {
   node .\\bridge.mjs duet next [--agent codex|minimax|claude] [--raw]
   node .\\bridge.mjs duet packet export --agent codex|minimax|claude [--format json|markdown] [--out <file>] [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet step --agent codex|minimax --dry-run|--yes [--codex-mode isolated|exec] [--raw] [--max-packet-chars <n>] [--port <port> for minimax]
-  node .\\bridge.mjs duet step --agent claude --dry-run [--raw] [--max-packet-chars <n>]
+  node .\\bridge.mjs duet step --agent claude --dry-run|--yes [--raw] [--max-packet-chars <n>]
   node .\\bridge.mjs duet loop --dry-run|--yes [--profile smoke] [--codex-mode isolated|exec] [--max-rounds <n>] [--max-codex-steps <n>] [--max-minimax-steps <n>] [--max-tokens <n>] [--require-agents codex,minimax] [--verifier <file>] [-- <verifier-args>...]
   node .\\bridge.mjs duet report [--format json|markdown] [--out <file>] [--ledger-lines <n>]
   node .\\bridge.mjs duet transcript export [--format json|markdown] [--out <file>] [--raw] [--include-ledger]
@@ -2830,10 +2830,12 @@ function duetStepPrompt(agent, packetText, options = {}) {
   }
   if (agent === "claude") {
     return [
-      "You are Claude Code participating in a manual, local Duet Relay dry-run.",
-      "No tools are approved by this bridge step. Do not assume live execution.",
-      "Review the packet and prepare a compact handoff that could be used in Stage 4.",
-      "When live support exists, choose an explicit next recipient: codex or minimax.",
+      "You are Claude Code participating in a manual Mavis MiniMax Bridge Duet Relay step.",
+      "No tools are approved by this bridge step. Do not execute tools unless your own CLI policy separately allows them.",
+      "Review the packet and return a compact handoff.",
+      "Start with exactly one status line: `Status: running`, `Status: done`, or `Status: human_escalation`.",
+      "If status is `running`, include exactly one next-agent line: `Next-Agent: codex` or `Next-Agent: minimax`.",
+      "Claude-to-Claude handoffs are not supported.",
       "",
       "## Duet Packet",
       "",
@@ -3282,6 +3284,83 @@ function suppressTerminalStatusInHandoff(answer, suppressedStatus, nextAgent) {
   return `Status: running\n\n${reason}\n\n${text}`;
 }
 
+function parseClaudeNextAgent(text) {
+  const match = String(text || "").match(/^\s*next-agent\s*:\s*(codex|minimax)\s*$/im);
+  return match ? match[1].toLowerCase() : null;
+}
+
+async function runClaudeDuetTurn(promptText, envelope) {
+  const id = cryptoRandomID();
+  const startedAt = Date.now();
+  const result = await runClaudePrompt({
+    prompt: promptText,
+    cwd: bridgeDir,
+    config,
+  });
+  const inputTokens = result.usage?.inputTokens ?? null;
+  const outputTokens = result.usage?.outputTokens ?? null;
+  const cacheRead = result.usage?.cacheReadTokens ?? null;
+  const cacheWrite = result.usage?.cacheCreationTokens ?? null;
+  const entry = {
+    provider: "anthropic",
+    role: "claude",
+    model: result.model || config.claudeModel || "claude-cli",
+    inputTokens,
+    outputTokens,
+    cacheRead,
+    cacheWrite,
+    costUsd: result.costUsd,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    resultSubtype: result.resultSubtype,
+    isError: result.isError,
+    stopReason: result.stopReason,
+    numTurns: result.numTurns,
+    durationMs: result.durationMs ?? Date.now() - startedAt,
+  };
+  return {
+    id,
+    answer: result.answer || "",
+    sessionID: result.sessionId || null,
+    port: null,
+    provider: "anthropic",
+    role: "claude",
+    model: entry.model,
+    usage: result.usage,
+    turns: [{
+      index: 1,
+      taskPath: envelope.taskPath,
+      chars: promptText.length,
+      providerID: "anthropic",
+      modelID: entry.model,
+      inputTokens,
+      outputTokens,
+      cacheWrite,
+      cacheRead,
+      finishReason: result.resultSubtype || "unknown",
+      truncated: false,
+      outputCap: null,
+      outputCapRatio: null,
+      nearOutputCap: false,
+      costUsd: result.costUsd,
+    }],
+    entries: [entry],
+    signals: {
+      providerClaude: true,
+      inputTokens,
+      outputTokens,
+      cacheWrite,
+      cacheRead,
+      costUsd: result.costUsd,
+      timedOut: result.timedOut,
+      isError: result.isError,
+      resultSubtype: result.resultSubtype,
+    },
+    diagnostics: result.diagnostics,
+    rawResult: result,
+  };
+}
+
 async function runDuetStepLive(args, options = {}) {
   const raw = args.includes("--raw");
   if (!args.includes("--yes")) throw new Error("duet step requires --dry-run or --yes");
@@ -3289,9 +3368,6 @@ async function runDuetStepLive(args, options = {}) {
   if (args.includes("--force")) throw new Error("duet step does not support --force");
   requireSpendingApproval(args, "duet step");
   const agent = requireDuetAgent(argValue(args, "--agent"), "--agent");
-  if (agent === "claude") {
-    throw new Error("duet step --agent claude --yes is Stage 4; use --dry-run in Stage 3");
-  }
   const codexMode = agent === "codex" ? codexModeArg(args, "exec") : null;
   const stateBefore = readDuetState();
   const stateBeforeText = fs.readFileSync(duetStatePath, "utf8");
@@ -3323,16 +3399,110 @@ async function runDuetStepLive(args, options = {}) {
   };
   const modelRun = agent === "minimax"
     ? await runDuetReviewOnlyTurn(args, promptText, envelope)
-    : await runCodexExecTurn(promptText, envelope, pendingPath, { codexMode });
+    : agent === "codex"
+      ? await runCodexExecTurn(promptText, envelope, pendingPath, { codexMode })
+      : await runClaudeDuetTurn(promptText, envelope);
 
   const answer = modelRun.answer || "";
   const modelStatus = parseDuetStepStatus(answer);
-  if (agent === "minimax" || !fs.existsSync(pendingPath) || !answer.trim()) {
-    const fallbackAgent = agent === "minimax" ? "MiniMax" : "Codex";
+  if (agent === "minimax" || agent === "claude" || !fs.existsSync(pendingPath) || !answer.trim()) {
+    const fallbackAgent = agent === "minimax" ? "MiniMax" : agent === "claude" ? "Claude" : "Codex";
     fs.writeFileSync(pendingPath, answer.trim() || `Status: running\n\n${fallbackAgent} returned an empty handoff.`, "utf8");
   }
   let status = modelStatus;
-  let passTo = nextDuetAgent(agent);
+  let passTo = agent === "claude" ? parseClaudeNextAgent(answer) : nextDuetAgent(agent);
+  const claudeRunFailed = agent === "claude" && (
+    Boolean(modelRun.signals?.isError) ||
+    Boolean(modelRun.signals?.timedOut) ||
+    (modelRun.entries || []).some((entry) => entry.exitCode !== null && entry.exitCode !== undefined && entry.exitCode !== 0)
+  );
+  if (claudeRunFailed) {
+    writeTextAtomic(duetStatePath, stateBeforeText);
+    writeTextAtomic(duetJournalPath, journalBeforeText);
+    const handoffTextForSummary = fs.readFileSync(pendingPath, "utf8");
+    const reason = modelRun.signals?.resultSubtype || (modelRun.signals?.timedOut ? "timeout" : "non_zero_exit");
+    const out = {
+      event: "duet-step",
+      id: modelRun.id,
+      agent,
+      mode: "claude-live",
+      codexMode,
+      tokenSpending: true,
+      sessionID: modelRun.sessionID,
+      port: modelRun.port,
+      provider: modelRun.provider,
+      role: modelRun.role,
+      model: modelRun.model,
+      status,
+      modelStatus,
+      pendingPath,
+      turns: publicModelTurns(modelRun.turns || [], raw),
+      entries: modelRun.entries,
+      signals: modelRun.signals,
+      usage: modelRun.usage,
+      diagnostics: raw ? modelRun.diagnostics : undefined,
+      packet: raw ? {
+        maxChars: maxPacketChars,
+        rawChars: rawPacket.rendered.length,
+        rawSha256: textDigest(rawPacket.rendered),
+        rawOverBudget: rawPacket.payload.packet.overBudget,
+      } : {
+        maxChars: maxPacketChars,
+        rawOverBudget: rawPacket.payload.packet.overBudget,
+      },
+      applyStatus: "apply_failed",
+      error: `Claude live step failed: ${reason}`,
+      answer: raw ? answer : undefined,
+      answerSummary: textSummary(handoffTextForSummary),
+      state: publicDuetState(stateBefore),
+    };
+    appendJsonl(ledgerPath, out);
+    appendJsonl(outboxPath, out);
+    return { out, failed: true };
+  }
+  if (agent === "claude" && status === "running" && !passTo) {
+    writeTextAtomic(duetStatePath, stateBeforeText);
+    writeTextAtomic(duetJournalPath, journalBeforeText);
+    const handoffTextForSummary = fs.readFileSync(pendingPath, "utf8");
+    const out = {
+      event: "duet-step",
+      id: modelRun.id,
+      agent,
+      mode: "claude-live",
+      codexMode,
+      tokenSpending: true,
+      sessionID: modelRun.sessionID,
+      port: modelRun.port,
+      provider: modelRun.provider,
+      role: modelRun.role,
+      model: modelRun.model,
+      status,
+      modelStatus,
+      pendingPath,
+      turns: publicModelTurns(modelRun.turns || [], raw),
+      entries: modelRun.entries,
+      signals: modelRun.signals,
+      usage: modelRun.usage,
+      diagnostics: raw ? modelRun.diagnostics : undefined,
+      packet: raw ? {
+        maxChars: maxPacketChars,
+        rawChars: rawPacket.rendered.length,
+        rawSha256: textDigest(rawPacket.rendered),
+        rawOverBudget: rawPacket.payload.packet.overBudget,
+      } : {
+        maxChars: maxPacketChars,
+        rawOverBudget: rawPacket.payload.packet.overBudget,
+      },
+      applyStatus: "apply_failed",
+      error: "Claude running handoff must include `Next-Agent: codex` or `Next-Agent: minimax`",
+      answer: raw ? answer : undefined,
+      answerSummary: textSummary(handoffTextForSummary),
+      state: publicDuetState(stateBefore),
+    };
+    appendJsonl(ledgerPath, out);
+    appendJsonl(outboxPath, out);
+    return { out, failed: true };
+  }
   let suppression = null;
   if (typeof options.terminalPolicy === "function") {
     suppression = options.terminalPolicy({ agent, status: modelStatus });
@@ -3349,7 +3519,7 @@ async function runDuetStepLive(args, options = {}) {
     event: "duet-step",
     id: modelRun.id,
     agent,
-    mode: agent === "minimax" ? "review-only" : "exec",
+    mode: agent === "minimax" ? "review-only" : agent === "codex" ? "exec" : "claude-live",
     codexMode,
     tokenSpending: true,
     sessionID: modelRun.sessionID,
@@ -4014,9 +4184,10 @@ function duetPassCommand(args, options = {}) {
     throw new Error(`baton is held by ${state.baton}; use --force to override`);
   }
   const status = requireDuetStatus(argValue(args, "--status", "running"));
+  const explicitTo = argValue(args, "--to", null);
   const to = status === "running"
-    ? requireDuetAgent(argValue(args, "--to", nextDuetAgent(from)), "--to")
-    : argValue(args, "--to", null);
+    ? requireDuetAgent(explicitTo || nextDuetAgent(from), "--to")
+    : explicitTo;
   if (to) requireDuetAgent(to, "--to");
 
   const handoff = readDuetHandoffText(argValue(args, "--handoff"));
