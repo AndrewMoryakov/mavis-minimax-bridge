@@ -28,7 +28,8 @@ Always run commands from the repository root.
   `duet report`.
 - Token-spending commands: `ask`, `mvs-send`, `canary`, `optimize-check`
   without `--skip-canary`, `duet step --agent minimax --yes`, and
-  `duet step --agent codex --yes`, and `duet loop --yes`.
+  `duet step --agent codex --yes`, `duet step --agent claude --yes`, and
+  `duet loop --yes`.
 - Ask for explicit user approval before running token-spending commands.
 - Never send to a burned, denied, or guessed `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
@@ -100,7 +101,8 @@ node .\bridge.mjs mode set --prompt-cache off --context-budget off
 Use Duet Relay when Codex and MiniMax need to pass a task back and forth after
 the human gives the initial goal. These commands are local-only except for
 explicit `duet step --agent minimax --yes` and
-`duet step --agent codex --yes` / `duet loop --yes`:
+`duet step --agent codex --yes` / `duet step --agent claude --yes` /
+`duet loop --yes`:
 
 ```powershell
 node .\bridge.mjs duet start --goal path\to\goal.md --baton codex --max-iterations 12
@@ -111,9 +113,11 @@ node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
+node .\bridge.mjs duet step --agent claude --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
+node .\bridge.mjs duet step --agent claude --yes
 node .\bridge.mjs duet loop --dry-run
 node .\bridge.mjs duet loop --dry-run --profile smoke
 node .\bridge.mjs duet loop --yes
@@ -147,13 +151,15 @@ Use `duet step --dry-run` before any real duet step. It is local-only,
 token-free, and validates status, baton, route/model or Codex CLI settings,
 selected `codexMode`, and estimated input tokens.
 
-Run `duet step --agent minimax --yes` or `duet step --agent codex --yes` only
-after explicit token-spending approval. MiniMax uses the review-only model path.
-Codex uses a separate non-interactive `codex exec` process. Codex supports
-`--codex-mode exec|isolated`; isolated mode uses an empty scratch workspace,
-`read-only` sandboxing, and `--skip-git-repo-check`. It reduces workspace
-exposure but is not a hard security boundary. Both write a pending local handoff,
-apply it through hardened `duet pass`, and redact the answer by default.
+Run `duet step --agent minimax --yes`, `duet step --agent codex --yes`, or
+`duet step --agent claude --yes` only after explicit token-spending approval.
+MiniMax uses the review-only model path. Codex uses a separate non-interactive
+`codex exec` process. Claude uses the configured or discovered Claude CLI.
+Codex supports `--codex-mode exec|isolated`; isolated mode uses an empty
+scratch workspace, `read-only` sandboxing, and `--skip-git-repo-check`. It
+reduces workspace exposure but is not a hard security boundary. The step writes
+a pending local handoff, applies it through hardened `duet pass`, and redacts
+the answer by default.
 
 Use `duet loop --dry-run` to preview the autonomous loop without spending
 tokens. Prefer `--profile smoke` for compact live validation; smoke defaults
@@ -164,6 +170,8 @@ Run `duet loop --yes` only after explicit token-spending approval. It alternates
 the current baton holder through hardened `duet step --agent <agent> --yes`,
 optionally runs a verifier between running steps, and stops on terminal status,
 limits, token budget, repeated handoff hash, apply failure, or verifier failure.
+When Claude is registered, the loop can spend Anthropic/Claude tokens; keep
+`--max-claude-steps` low.
 
 Use `duet report` after a loop or step sequence for a local-only redacted run
 summary: current state, latest loop stop reasons, step counts, token usage,
@@ -202,9 +210,9 @@ explicitly approves that separate action.
 `show`, `next`, `loop --dry-run`, `loop --yes`, and `report` commands, but it
 does not run the autonomous loop.
 
-Duet Relay records the baton and shared state. It does not wake, message, or
-activate MiniMax automatically. To continue on MiniMax's side, the user must
-open MiniMax or explicitly approve a separate `ask` / `mvs-send` step.
+Duet Relay records the baton and shared state. `duet start`, `duet init`,
+manual passes, and dry-runs are local-only. Live `duet loop --yes` can activate
+registered agents after explicit approval.
 
 ## Collaboration With MiniMax
 

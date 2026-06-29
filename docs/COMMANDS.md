@@ -294,8 +294,10 @@ node .\bridge.mjs duet step --agent codex --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
-node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 60000
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 60000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,claude --max-rounds 4 --max-codex-steps 2 --max-claude-steps 2 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax,claude --max-rounds 6 --max-codex-steps 2 --max-minimax-steps 2 --max-claude-steps 2 --max-tokens 60000
 node .\bridge.mjs duet loop --dry-run --profile smoke --require-agents codex,minimax
 node .\bridge.mjs duet report
 node .\bridge.mjs duet report --format markdown --out .\duet-report.local.md
@@ -401,6 +403,10 @@ running steps, and stops on terminal relay status, max rounds, per-agent step
 limits, token budget, repeated handoff hash, apply failure, or verifier
 failure.
 
+Claude CLI cost controls are not a hard pre-request cap in every observed
+runtime path. Keep `--max-claude-steps` low and prefer a dry-run before any
+live loop that includes Claude.
+
 Add `--require-agents codex,minimax`, `--require-agents codex,claude`, or
 `--require-agents codex,minimax,claude` to require specific agents before final
 `done`. If an early agent returns `done`, the loop records
@@ -431,8 +437,9 @@ For the simplest user flow, describe the task to Codex or MiniMax and end with
 For a longer autonomous run where the human approves one bounded live loop and
 then reads the final report, see [LIVE_RUNBOOK.md](LIVE_RUNBOOK.md).
 
-Duet Relay records baton state locally. It does not wake, message, or activate
-the other agent automatically.
+Duet Relay records baton state locally. `duet start`, `duet init`, manual
+passes, and dry-runs are local-only. Live `duet loop --yes` can activate the
+registered agents after explicit approval.
 
 ## Logs
 

@@ -1,13 +1,16 @@
 # Duet Live Runbook
 
-This is the practical human flow for a longer autonomous Codex and MiniMax run.
-Use it when the human wants to give one compact goal, let the agents alternate
-without approval between rounds, and inspect the result at the end.
+This is the practical human flow for a longer autonomous run. The default
+examples use Codex and MiniMax; add Claude explicitly when you want a
+three-agent or Codex-Claude loop. Use this when the human wants to give one
+compact goal, let the agents alternate without approval between rounds, and
+inspect the result at the end.
 
 The bridge still stays conservative:
 
 - `duet start`, `duet loop --dry-run`, and `duet report` are local-only.
-- `duet loop --yes` can spend Codex/OpenAI and MiniMax tokens.
+- `duet loop --yes` can spend Codex/OpenAI, MiniMax, and Anthropic/Claude
+  tokens depending on the registered agents.
 - The live loop starts only after explicit human approval.
 - Output is redacted by default; use raw transcript exports only when exact
   local goal, handoff, and journal text are intentionally needed.
@@ -37,7 +40,7 @@ repository, not in the goal file.
 Run:
 
 ```powershell
-node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12 --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 120000
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --baton codex --max-iterations 12 --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
 ```
 
 Use `--baton minimax` if MiniMax should make the first move.
@@ -51,7 +54,7 @@ redacted launch packet with the exact `show`, `next`, `loop --dry-run`,
 Run the dry run from the launch packet:
 
 ```powershell
-node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 120000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
 ```
 
 For a shorter smoke validation, use the built-in smoke profile:
@@ -78,7 +81,7 @@ Check:
 If you have a verifier:
 
 ```powershell
-node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 120000 --verifier .\verify.mjs -- --fast
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000 --verifier .\verify.mjs -- --fast
 ```
 
 Verifier files must live inside the bridge root. They run from a scratch working
@@ -90,7 +93,7 @@ not `process.cwd()`.
 After the dry run looks right, explicitly approve the token-spending loop:
 
 ```powershell
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 120000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000
 ```
 
 For a compact smoke run:
@@ -102,7 +105,7 @@ node .\bridge.mjs duet loop --yes --profile smoke --require-agents codex,minimax
 With a verifier:
 
 ```powershell
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 120000 --verifier .\verify.mjs -- --fast
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 120000 --verifier .\verify.mjs -- --fast
 ```
 
 The bridge alternates the current baton holder through real agent steps and
@@ -110,6 +113,25 @@ stops on terminal status, max rounds, per-agent step limits, token budget,
 repeated handoff hash, apply failure, or verifier failure. With
 `--require-agents`, a premature `done` is recorded as suppressed and handed to
 the next missing required agent; `human_escalation` remains terminal.
+
+For a Claude loop, register Claude and keep its step cap low:
+
+```powershell
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --agents codex,claude --baton codex --max-iterations 8 --max-rounds 4 --max-codex-steps 2 --max-claude-steps 2 --max-tokens 120000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,claude --max-rounds 4 --max-codex-steps 2 --max-claude-steps 2 --max-tokens 120000
+node .\bridge.mjs duet loop --yes --require-agents codex,claude --max-rounds 4 --max-codex-steps 2 --max-claude-steps 2 --max-tokens 120000
+```
+
+For all three agents:
+
+```powershell
+node .\bridge.mjs duet start --goal .\duet-goal.local.md --agents codex,minimax,claude --baton codex --max-iterations 12 --max-rounds 6 --max-codex-steps 2 --max-minimax-steps 2 --max-claude-steps 2 --max-tokens 120000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax,claude --max-rounds 6 --max-codex-steps 2 --max-minimax-steps 2 --max-claude-steps 2 --max-tokens 120000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax,claude --max-rounds 6 --max-codex-steps 2 --max-minimax-steps 2 --max-claude-steps 2 --max-tokens 120000
+```
+
+Claude CLI cost controls are not a hard pre-request cap in every observed
+runtime path. Treat `--max-claude-steps` as the practical safety rail.
 
 ## 5. Read The Final Report
 

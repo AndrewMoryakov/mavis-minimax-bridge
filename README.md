@@ -248,9 +248,10 @@ See [docs/LETS_GO.md](docs/LETS_GO.md) for the agent-side behavior behind this
 prompt. For a longer autonomous run where the human approves one bounded live
 loop and reads the final report, use [docs/LIVE_RUNBOOK.md](docs/LIVE_RUNBOOK.md).
 
-Important: Duet Relay records the baton and shared state. It does not wake,
-message, or activate the other agent automatically. Continue from the other
-agent's surface, or explicitly approve a separate `ask` / `mvs-send` step.
+Important: `duet start`, `duet init`, manual baton passes, and dry-runs are
+local-only; they do not wake, message, or activate another agent. A live
+`duet loop --yes` is different: after explicit approval it drives the current
+baton holder through bounded `duet step --agent <agent> --yes` turns.
 
 Initialize a relay from a local goal file:
 
@@ -361,8 +362,10 @@ same hardened `duet pass` validation, and redact the answer in stdout unless
 Preview or run a bounded autonomous loop:
 
 ```powershell
-node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 60000
-node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-claude-steps 2 --max-tokens 60000
+node .\bridge.mjs duet loop --dry-run --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax --max-rounds 8 --max-codex-steps 4 --max-minimax-steps 4 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,claude --max-rounds 4 --max-codex-steps 2 --max-claude-steps 2 --max-tokens 60000
+node .\bridge.mjs duet loop --yes --require-agents codex,minimax,claude --max-rounds 6 --max-codex-steps 2 --max-minimax-steps 2 --max-claude-steps 2 --max-tokens 60000
 node .\bridge.mjs duet loop --dry-run --profile smoke --require-agents codex,minimax
 ```
 
@@ -382,6 +385,10 @@ through the same hardened `duet step --agent <agent> --yes` path, optionally
 runs a verifier between running steps, and stops on `done`, `human_escalation`,
 max rounds, step limits, token budget, repeated handoff hash, apply failure, or
 verifier failure.
+
+Claude CLI cost controls are not a hard pre-request cap in every observed
+runtime path. Keep `--max-claude-steps` low and prefer a dry-run before any
+live loop that includes Claude.
 
 Add `--require-agents codex,minimax`, `--require-agents codex,claude`, or
 `--require-agents codex,minimax,claude` when a live loop must not finish until
@@ -448,7 +455,8 @@ Operational rules:
 - Duet commands are local-only except for explicit
   `duet step --agent minimax --yes`, `duet step --agent codex --yes`, and
   `duet loop --yes`, which can call agents and spend tokens.
-- Duet Relay does not wake, message, or activate the other agent automatically.
+- `duet start`, `duet init`, manual passes, and dry-runs are local-only. Live
+  `duet loop --yes` can activate the registered agents after explicit approval.
 
 Rules for agents:
 

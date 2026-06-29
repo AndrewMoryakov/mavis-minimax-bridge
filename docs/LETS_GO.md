@@ -14,10 +14,9 @@ For a longer autonomous run that uses `duet start`, `duet loop --dry-run`,
 one approved `duet loop --yes`, and `duet report`, see
 [LIVE_RUNBOOK.md](LIVE_RUNBOOK.md).
 
-Important: Duet Relay records the baton and shared state. It does not wake,
-message, or activate the other agent automatically. To continue on the other
-side, open that agent's surface and ask it to continue the current Duet Relay,
-or explicitly approve a separate token-spending `ask` / `mvs-send` step.
+Important: Duet Relay records the baton and shared state. `duet start`,
+`duet init`, manual passes, and dry-runs are local-only. A live
+`duet loop --yes` can activate registered agents after explicit approval.
 
 ## Prompt To Codex Or MiniMax
 
@@ -92,12 +91,14 @@ node .\bridge.mjs duet pass --from codex --status human_escalation --handoff .\h
 ## Safety
 
 - Duet commands are local-only except for explicit
-  `duet step --agent minimax --yes`, `duet step --agent codex --yes`, and
-  `duet loop --yes`.
+  `duet step --agent minimax --yes`, `duet step --agent codex --yes`,
+  `duet step --agent claude --yes`, and `duet loop --yes`.
 - `duet step --agent minimax --yes` can call MiniMax and
   `duet step --agent codex --yes` can run a real Codex CLI turn.
-  `duet loop --yes` can run both; run any of them only after explicit approval.
-- Duet Relay does not wake, message, or activate the other agent automatically.
+  `duet step --agent claude --yes` can run a real Claude CLI turn.
+  `duet loop --yes` can run registered agents; run any of them only after
+  explicit approval.
+- `duet start`, `duet init`, manual passes, and dry-runs are local-only.
 - Sending arbitrary prompts to MiniMax still requires explicit use of `ask` or
   `mvs-send` and explicit user approval.
 - Default Duet output is redacted. Use `--raw` only when the user explicitly

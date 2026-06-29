@@ -34,11 +34,12 @@ Rules:
 - Use `duet next` before acting when baton ownership is unclear.
 - Use `duet packet export --agent codex|minimax` when a compact derived packet
   is needed for either side; packets are projections, not relay state.
-- Use `duet step --agent codex|minimax --dry-run` before any real duet step; it
+- Use `duet step --agent codex|minimax|claude --dry-run` before any real duet step; it
   is local-only and token-free.
 - Use `duet step --agent minimax --yes` or `duet step --agent codex --yes` only
-  after explicit token-spending approval; each runs one relay turn and applies
-  the handoff.
+  after explicit token-spending approval. Use `duet step --agent claude --yes`
+  only after the same approval. Each runs one relay turn and applies the
+  handoff.
 - Prefer `duet step --agent codex --yes --codex-mode isolated` for compact
   Codex review turns. Isolated mode starts Codex from a scratch read-only
   workspace with `--skip-git-repo-check`, but it is not a hard security
@@ -47,7 +48,8 @@ Rules:
   tokens. Prefer `--profile smoke` for compact live validation; smoke defaults
   Codex to `--codex-mode isolated`.
 - Use `duet loop --yes` only after explicit token-spending approval; it can run
-  both Codex and MiniMax steps.
+  registered Codex, MiniMax, and Claude steps. Keep `--max-claude-steps` low
+  when Claude participates.
 - Use `duet report` after a loop or step sequence to summarize stop reasons,
   budget diagnostics, usage, verifier results, transcript hashes, and next commands without
   revealing local relay text.
@@ -57,10 +59,11 @@ Rules:
 - `ask` attaches bounded local Git source context for dirty worktrees by
   default; use `--dry-run --raw` to inspect it without spending tokens.
 - Duet Relay commands are local-only except for explicit
-  `duet step --agent minimax --yes`, `duet step --agent codex --yes`, and
-  `duet loop --yes`. Use relay commands for baton-passing state, not arbitrary
-  prompts.
-- Duet Relay does not wake, message, or activate the other agent automatically.
+  `duet step --agent minimax --yes`, `duet step --agent codex --yes`,
+  `duet step --agent claude --yes`, and `duet loop --yes`. Use relay commands
+  for baton-passing state, not arbitrary prompts.
+- `duet start`, `duet init`, manual passes, and dry-runs are local-only. Live
+  `duet loop --yes` can activate registered agents after explicit approval.
 - Duet output is redacted by default; use `--raw` only when the user explicitly
   needs local goal, handoff, or journal text in stdout.
 - Use `duet verify --verifier <file>` for deterministic local verifier scripts;

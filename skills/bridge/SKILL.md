@@ -28,8 +28,8 @@ Always run commands from that directory.
   agent.
 - `ask`, `canary`, `optimize-check` without `--skip-canary`, `mvs-send`, and
   `duet step --agent minimax --yes` / `duet step --agent codex --yes` /
-  `duet loop --yes` can spend tokens. Ask for explicit user approval before
-  running them.
+  `duet step --agent claude --yes` / `duet loop --yes` can spend tokens. Ask
+  for explicit user approval before running them.
 - Never send to a burned or denied `mvs_...` session.
 - Prefer `ask --mode review-only` before any patch proposal.
 - `ask` automatically attaches bounded local Git source context for dirty
@@ -65,9 +65,11 @@ node .\bridge.mjs duet packet export --agent codex
 node .\bridge.mjs duet packet export --agent minimax
 node .\bridge.mjs duet step --agent minimax --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run
+node .\bridge.mjs duet step --agent claude --dry-run
 node .\bridge.mjs duet step --agent codex --dry-run --codex-mode isolated
 node .\bridge.mjs duet step --agent minimax --yes
 node .\bridge.mjs duet step --agent codex --yes
+node .\bridge.mjs duet step --agent claude --yes
 node .\bridge.mjs duet loop --dry-run
 node .\bridge.mjs duet loop --dry-run --profile smoke
 node .\bridge.mjs duet loop --yes
@@ -371,9 +373,9 @@ Expected behavior:
 Do not run token-spending commands as part of `let's go` unless the user
 explicitly approves that separate action.
 
-Duet Relay records the baton and shared state. It does not wake, message, or
-activate the other agent automatically. To continue on Codex's side, the user
-must open Codex or explicitly approve a separate bridge send step.
+Duet Relay records the baton and shared state. `duet start`, `duet init`,
+manual passes, and dry-runs are local-only. Live `duet loop --yes` can activate
+registered agents after explicit approval.
 
 ### `/bridge ask`
 

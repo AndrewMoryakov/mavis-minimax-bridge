@@ -254,7 +254,7 @@ test("duet agents registry routes manual handoffs without hidden minimax fallbac
   const dryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run"]));
   assert.deepEqual(dryRun.limits.agents, ["codex", "claude"]);
   assert.equal(dryRun.nextStep.agent, "codex");
-  assert.equal(dryRun.limits.maxClaudeSteps, 4);
+  assert.equal(dryRun.limits.maxClaudeSteps, 2);
 
   ok(runBridge(dir, ["duet", "pass", "--from", "codex", "--handoff", "handoff.md"]));
   assert.equal(readJson(dir, "duet-state.json").baton, "claude");
@@ -538,6 +538,7 @@ test("duet step claude dry-run and live fake step are manual-only", (t) => {
   ok(runBridge(dir, ["config", "set", "--key", "claudeRequireAvailable", "--value", "true"]));
   const strictClaudeLoopDryRun = ok(runBridge(dir, ["duet", "loop", "--dry-run"]));
   assert.equal(strictClaudeLoopDryRun.wouldRunLoop, false);
+  assert.equal(strictClaudeLoopDryRun.stopReasons[0], "claude.cli.missing");
   assert.ok(strictClaudeLoopDryRun.stopReasons.includes("claude.cli.missing"));
   fails(
     runBridge(dir, ["duet", "step", "--agent", "claude", "--dry-run"]),
@@ -1023,6 +1024,61 @@ test("duet loop yes runs registered codex claude loop with fake Claude CLI", (t)
   assert.deepEqual(state.agents, ["codex", "claude"]);
 });
 
+test("duet loop yes runs registered codex minimax claude loop with fake Claude CLI", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_THREE_AGENT_LOOP_123";
+  const claudeCli = writeFakeClaudeShim(dir, "handoff_codex");
+  writeFile(dir, "goal.md", `Three agent loop goal ${secret}`);
+
+  ok(runBridge(dir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(claudeCli)]));
+  ok(runBridge(dir, [
+    "duet",
+    "init",
+    "--goal",
+    "goal.md",
+    "--agents",
+    "codex,minimax,claude",
+    "--baton",
+    "minimax",
+    "--max-iterations",
+    "6",
+  ]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: running\n\nShared fake handoff ${secret}.`,
+  };
+  const result = ok(runBridge(dir, [
+    "duet",
+    "loop",
+    "--yes",
+    "--max-rounds",
+    "3",
+    "--max-codex-steps",
+    "1",
+    "--max-minimax-steps",
+    "1",
+    "--max-claude-steps",
+    "1",
+  ], { env }));
+  assert.equal(result.event, "duet-loop");
+  assert.equal(result.status, "running");
+  assert.deepEqual(result.stopReasons, ["max_rounds:3"]);
+  assert.equal(result.counts.codexSteps, 1);
+  assert.equal(result.counts.minimaxSteps, 1);
+  assert.equal(result.counts.claudeSteps, 1);
+  assert.deepEqual(result.counts.agentSteps, { codex: 1, minimax: 1, claude: 1 });
+  assert.deepEqual(result.steps.map((step) => step.agent), ["minimax", "claude", "codex"]);
+  assert.equal(result.steps[1].provider, "anthropic");
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.status, "running");
+  assert.equal(state.baton, "minimax");
+  assert.deepEqual(state.agents, ["codex", "minimax", "claude"]);
+});
+
 test("duet loop yes suppresses premature done until required agents contribute", (t) => {
   const dir = sandbox(t);
   const secret = "SECRET_LOOP_REQUIRE_AGENTS_123";
@@ -1076,6 +1132,64 @@ test("duet loop yes suppresses premature done until required agents contribute",
   const markdownReport = runBridge(dir, ["duet", "report", "--format", "markdown"]);
   assert.equal(markdownReport.status, 0, markdownReport.text);
   assert.match(markdownReport.stdout, /codexMode=exec/);
+});
+
+test("duet loop yes suppresses premature done until codex and claude contribute", (t) => {
+  const dir = sandbox(t);
+  const secret = "SECRET_LOOP_REQUIRE_CLAUDE_123";
+  const claudeCli = writeFakeClaudeShim(dir, "handoff_codex");
+  writeFile(dir, "goal.md", `Loop required Claude goal ${secret}`);
+
+  ok(runBridge(dir, ["config", "set", "--key", "claudeCli", "--value", JSON.stringify(claudeCli)]));
+  ok(runBridge(dir, [
+    "duet",
+    "init",
+    "--goal",
+    "goal.md",
+    "--agents",
+    "codex,claude",
+    "--baton",
+    "codex",
+    "--max-iterations",
+    "5",
+  ]));
+
+  const env = {
+    ...process.env,
+    MAVIS_BRIDGE_ENABLE_TEST_MODEL_REPLY: "1",
+    MAVIS_BRIDGE_TEST_MODEL_REPLY: `Status: done\n\nPremature codex done ${secret}.`,
+  };
+  const result = ok(runBridge(dir, [
+    "duet",
+    "loop",
+    "--yes",
+    "--max-rounds",
+    "2",
+    "--require-agents",
+    "codex,claude",
+    "--max-codex-steps",
+    "1",
+    "--max-claude-steps",
+    "1",
+  ], { env }));
+  assert.equal(result.event, "duet-loop");
+  assert.equal(result.status, "running");
+  assert.deepEqual(result.stopReasons, ["max_rounds:2"]);
+  assert.deepEqual(result.steps.map((step) => step.agent), ["codex", "claude"]);
+  assert.equal(result.steps[0].status, "running");
+  assert.equal(result.steps[0].modelStatus, "done");
+  assert.equal(result.steps[0].suppressedTerminalStatus, "done");
+  assert.match(result.steps[0].suppressionReason, /required_agents_missing:claude/);
+  assert.equal(result.steps[1].agent, "claude");
+  assert.deepEqual(result.requirements.requiredAgents, ["codex", "claude"]);
+  assert.deepEqual(result.requirements.satisfiedAgents, ["codex", "claude"]);
+  assert.deepEqual(result.requirements.missingAgents, []);
+  assert.equal(result.suppressedTerminalStatuses.length, 1);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+
+  const state = readJson(dir, "duet-state.json");
+  assert.equal(state.status, "running");
+  assert.equal(state.baton, "codex");
 });
 
 test("duet report preserves loop profile and codex mode in continue commands", (t) => {
@@ -2133,7 +2247,8 @@ test("installable skill and prompt surfaces document duet relay", () => {
   for (const relative of ["skills/bridge/SKILL.md", "skills/codex-bridge/SKILL.md", "prompts/bridge.md", "docs/LETS_GO.md"]) {
     const text = fs.readFileSync(path.join(repoRoot, relative), "utf8");
     assert.match(text, /let's go/, `${relative} should document the natural-language start`);
-    assert.match(text, /does not wake, message, or\s+activate/, `${relative} should clarify that relay does not auto-activate the other agent`);
+    assert.match(text, /local-only/, `${relative} should clarify which relay commands are local-only`);
+    assert.match(text, /duet loop --yes.*activate|activate.*duet loop --yes/s, `${relative} should clarify that live loop can activate registered agents`);
   }
 
   for (const relative of ["skills/bridge/SKILL.md", "skills/codex-bridge/SKILL.md", "prompts/bridge.md"]) {
@@ -2160,7 +2275,7 @@ test("installable skill and prompt surfaces document duet relay", () => {
   assert.match(runbook, /duet loop --dry-run/, "live runbook should require dry-run preflight");
   assert.match(runbook, /duet loop --yes/, "live runbook should document the live loop");
   assert.match(runbook, /duet report/, "live runbook should finish with report");
-  assert.match(runbook, /can spend Codex\/OpenAI and MiniMax tokens/, "live runbook should warn about token spending");
+  assert.match(runbook, /can spend Codex\/OpenAI, MiniMax, and Anthropic\/Claude\s+tokens/, "live runbook should warn about token spending");
 });
 
 test("install scripts reject unknown options before writing", (t) => {

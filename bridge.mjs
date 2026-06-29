@@ -3784,7 +3784,7 @@ function parseDuetLoopOptions(args) {
       maxRounds: "8",
       maxCodexSteps: "8",
       maxMiniMaxSteps: "8",
-      maxClaudeSteps: "4",
+      maxClaudeSteps: "2",
       maxTokens: "60000",
       codexMode: "exec",
     };
@@ -4081,6 +4081,7 @@ async function duetLoopLive(args) {
     if (agent === "codex") codexSteps += 1;
     else if (agent === "minimax") minimaxSteps += 1;
     else if (agent === "claude") claudeSteps += 1;
+    else throw new Error(`unhandled loop agent counter: ${agent}`);
     const usage = stepResult.out.usage || stepResult.out.signals || {};
     totalInputTokens += Number(usage.input_tokens ?? usage.inputTokens ?? 0) || 0;
     totalOutputTokens += Number(usage.output_tokens ?? usage.outputTokens ?? 0) || 0;
@@ -4351,7 +4352,7 @@ function duetStartCommand(args) {
     commands: duetStartCommands(loop),
     warnings: [
       "duet start is local-only; run the dry-run command before approving the live loop",
-      "the live command can spend Codex/OpenAI and MiniMax tokens",
+      "the live command can spend Codex/OpenAI, MiniMax, and Anthropic/Claude tokens depending on registered agents",
     ],
   };
   appendJsonl(ledgerPath, { event: "duet-start", agents: state.agents, baton: state.baton, maxIterations: state.maxIterations, loop });
