@@ -13,6 +13,13 @@ duet.lock
 duet-state.json.*.tmp
 duet-journal.md.*.tmp
 .codex-isolated-*.local/
+orch-ledger.jsonl
+orch-state.json
+orch-journal.md
+orch.lock
+orch-artifacts/
+orch-*.json.*.tmp
+orch-*.md.*.tmp
 ```
 
 They are intentionally ignored by git because they can contain local paths,
@@ -40,8 +47,13 @@ node .\scripts\init-runtime.mjs --empty-jsonl
 runtime initializer. `duet.lock` is a short-lived guard file created while a
 duet command updates state. Atomic duet temp files may appear only if a process
 dies mid-write. `.codex-isolated-*.local/` directories are disposable scratch
-workspaces from interrupted isolated Codex runs. These files are ignored by git
-and can be deleted after inspection.
+workspaces from interrupted isolated Codex runs.
+
+`orch-*` files are reserved for the local supervised orchestrator. The ledger is
+the append-only durable trail, state is a rebuildable projection, journal is the
+human-readable trail, lock guards orchestrator writes, and `orch-artifacts/`
+holds raw worker outputs by reference. They are ignored by git and can be
+deleted after inspection when no orchestrator run is active.
 
 Run `node .\bridge.mjs doctor` before workspace-sensitive commands if the shell
 may be in another project. `doctor` is local-only and does not write runtime

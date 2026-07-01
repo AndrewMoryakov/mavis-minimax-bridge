@@ -8,6 +8,13 @@
 /duet-state.json.*.tmp
 /duet-journal.md.*.tmp
 /.codex-isolated-*.local/
+/orch-ledger.jsonl
+/orch-state.json
+/orch-journal.md
+/orch.lock
+/orch-artifacts/
+/orch-*.json.*.tmp
+/orch-*.md.*.tmp
 *.local.*
 /live-smoke-*/
 /examples/duet-simple-orders/answer.json
