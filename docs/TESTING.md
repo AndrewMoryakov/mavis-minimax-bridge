@@ -94,10 +94,21 @@ Token-spending commands are intentionally not covered by the offline suite:
 - real `duet step --agent minimax --yes` model calls
 - real `duet step --agent codex --yes` Codex CLI calls
 - real `duet loop --yes` autonomous model/agent calls
+- `npm run claude:smoke -- --yes`
 
 Run those only as explicit manual checks after user approval. Offline `duet
 step --agent minimax --yes` and `duet step --agent codex --yes` tests use an
 internal fake reply and do not send prompts.
+
+To record a live Claude Code smoke check without committing local evidence:
+
+```powershell
+npm run claude:smoke -- --yes --out claude-smoke-success.local.json
+```
+
+The command sends a tiny `Reply with OK only.` prompt through the bridge's
+Claude adapter, prints a compact JSON result, and writes the same result to the
+ignored `.local.json` file when `--out` is provided.
 
 For a live two-agent smoke test, see
 [`docs/DUET_ACCEPTANCE_TEST.md`](DUET_ACCEPTANCE_TEST.md). The live test uses

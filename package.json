@@ -58,6 +58,7 @@
     "mode": "node ./bridge.mjs mode list",
     "tokens": "node ./bridge.mjs token-stats --ledger",
     "audit": "node ./bridge.mjs audit",
+    "claude:smoke": "node ./scripts/check-claude.mjs",
     "optimize:check": "node ./bridge.mjs optimize-check --skip-canary",
     "optimize:check:canary": "node ./bridge.mjs optimize-check --yes"
   },
