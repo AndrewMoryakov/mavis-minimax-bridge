@@ -10,6 +10,7 @@ node .\bridge.mjs doctor
 node .\bridge.mjs status
 node .\bridge.mjs state
 node .\bridge.mjs orchestrate status
+node .\bridge.mjs orchestrate start --task .\task.local.md --target C:\path\to\project --dry-run
 node .\bridge.mjs config show
 npm run doctor
 npm run check
@@ -27,6 +28,8 @@ npm run install:codex-slash
   events.
 - `orchestrate status`: inspect local orchestrator ledger/state without model
   turns; add `--raw` only for local debugging when task text may be printed.
+- `orchestrate start --dry-run`: validate an orchestrator task and target without
+  model turns.
 - `config show`: show effective bridge config plus redacted raw local config.
 - `test:offline`: run deterministic local tests without MiniMax model turns.
 - `test:release`: run syntax check, offline tests, and `git diff --check`.

@@ -14,7 +14,9 @@ It provides:
 - direct posting to an explicit `mvs_...` session when the user approves it;
 - token/canary checks for prompt-cache and context-budget behavior;
 - a minimal Duet Relay for Codex and MiniMax baton-passing without a workflow
-  engine.
+  engine;
+- a supervised orchestrator that routes end-to-end work to Codex, MiniMax, and
+  optionally Claude.
 
 ## Status
 
@@ -43,6 +45,21 @@ workflow. Use the long command reference only when you need advanced controls:
 ```powershell
 node .\bridge.mjs help --all
 ```
+
+For supervised end-to-end work, start with a dry run:
+
+```powershell
+node .\bridge.mjs orchestrate start --task .\task.local.md --target C:\path\to\project --dry-run
+```
+
+Then run with explicit approval:
+
+```powershell
+node .\bridge.mjs orchestrate start --task .\task.local.md --target C:\path\to\project --yes
+```
+
+See [`docs/ORCHESTRATE.md`](docs/ORCHESTRATE.md) for the full supervised
+orchestrator guide.
 
 ## Install
 

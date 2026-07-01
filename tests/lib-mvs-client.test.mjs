@@ -61,8 +61,11 @@ test("session-id validators enforce format and deny-list", () => {
 test("session url helpers derive from config sessionDirectory", () => {
   const c = client({ sessionDirectory: "/work/space" });
   assert.equal(c.sessionDirectory(), "/work/space");
+  assert.equal(c.sessionDirectory("/task/workspace"), "/task/workspace");
   assert.equal(c.sessionQuery(), `directory=${encodeURIComponent("/work/space")}`);
+  assert.equal(c.sessionQuery("/task/workspace"), `directory=${encodeURIComponent("/task/workspace")}`);
   assert.match(c.messageUrl(15321, "mvs_x"), /\/session\/mvs_x\/message\?directory=/);
+  assert.match(c.messageUrl(15321, "mvs_x", { directory: "/task/workspace" }), new RegExp(encodeURIComponent("/task/workspace")));
 });
 
 test("mavisCli prefers the configured path", () => {
@@ -94,11 +97,11 @@ test("verifyMavisSession returns resolved session and rejects mismatch", async (
 test("createSession posts to the session endpoint", async (t) => {
   const port = await startServer(t, (req, res) => {
     assert.equal(req.method, "POST");
-    assert.match(req.url, /^\/session\?directory=/);
+    assert.equal(req.url, `/session?directory=${encodeURIComponent("/task/workspace")}`);
     jsonResponse(res, 200, { id: "mvs_new" });
   });
   const c = client({ mavisDaemonPort: port });
-  assert.deepEqual(await c.createSession(port, "title"), { id: "mvs_new" });
+  assert.deepEqual(await c.createSession(port, "title", { directory: "/task/workspace" }), { id: "mvs_new" });
 });
 
 test("readUsage skips non-mavis and denied sessions, summarizes valid ones", () => {

@@ -41,6 +41,8 @@ Always run commands from that directory.
   plus 2-3 focused follow-up task files.
 - Duet commands redact relay text by default; use `--raw` only when the user
   intentionally needs local goal, handoff, or journal text in stdout.
+- Orchestrator commands redact task text by default; use `--raw` only for local
+  debugging.
 
 ## Commands
 
@@ -78,6 +80,10 @@ node .\bridge.mjs duet loop --yes
 node .\bridge.mjs duet report
 node .\bridge.mjs duet transcript export
 node .\bridge.mjs duet verify --verifier path\to\verify.mjs
+node .\bridge.mjs orchestrate start --task path\to\task.md --target C:\path\to\project --dry-run
+node .\bridge.mjs orchestrate start --task path\to\task.md --target C:\path\to\project --yes
+node .\bridge.mjs orchestrate status
+node .\bridge.mjs orchestrate resume
 ```
 
 ### `/bridge doctor`

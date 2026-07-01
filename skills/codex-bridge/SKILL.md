@@ -41,6 +41,8 @@ Always run commands from the repository root.
 - Keep task files compact and focused.
 - Duet commands redact relay text by default; use `--raw` only when the user
   intentionally needs local goal, handoff, or journal text in stdout.
+- Orchestrator commands redact task text by default; use `--raw` only for local
+  debugging.
 
 ## Routine Checks
 
@@ -136,6 +138,23 @@ Finish or escalate:
 node .\bridge.mjs duet pass --from minimax --status done --handoff path\to\handoff.md
 node .\bridge.mjs duet pass --from minimax --status human_escalation --handoff path\to\handoff.md
 ```
+
+## Supervised Orchestrator
+
+Use when the human wants the bridge to own a larger task end to end under
+supervision. Dry-run first:
+
+```powershell
+node .\bridge.mjs orchestrate start --task path\to\task.md --target C:\path\to\project --dry-run
+node .\bridge.mjs orchestrate start --task path\to\task.md --target C:\path\to\project --yes
+node .\bridge.mjs orchestrate start --task path\to\task.md --target C:\path\to\project --agents codex,minimax,claude --yes
+node .\bridge.mjs orchestrate status
+node .\bridge.mjs orchestrate resume
+```
+
+`start --yes` can spend tokens. `status`, `resume` without `--yes`, and
+`start --dry-run` are local-only. If `resume` reports an ambiguous
+`worker-started`, inspect the workspace before any rerun.
 
 `duet-state.json`, `duet-journal.md`, `duet.lock`, and duet atomic temp files
 are local ignored runtime files. Keep handoffs compact; goal, handoff, and note

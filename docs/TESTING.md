@@ -80,6 +80,8 @@ Covered areas:
 - `state` visibility for Duet runtime files.
 - `orchestrate status` local projection, malformed ledger warnings, ambiguous
   worker-tail detection, and default redaction.
+- `orchestrate start` dry-run and scripted fake loop to `done`, plus target
+  validation and resume-blocked recovery behavior.
 - `.gitignore` coverage for runtime files and duet atomic temp files.
 - Installable skill and prompt surfaces documenting Duet Relay.
 - Duet acceptance harness for `examples/duet-simple-orders`, using fake agents
