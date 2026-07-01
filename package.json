@@ -53,6 +53,7 @@
     "canary:estimate": "node ./bridge.mjs canary-estimate",
     "prefix:build": "node ./scripts/build-stable-prefix.mjs",
     "status": "node ./bridge.mjs status",
+    "orchestrate:status": "node ./bridge.mjs orchestrate status",
     "state": "node ./bridge.mjs state",
     "doctor": "node ./bridge.mjs doctor",
     "mode": "node ./bridge.mjs mode list",

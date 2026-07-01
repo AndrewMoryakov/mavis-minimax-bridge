@@ -9,6 +9,7 @@ turn and should be run only after user approval.
 node .\bridge.mjs doctor
 node .\bridge.mjs status
 node .\bridge.mjs state
+node .\bridge.mjs orchestrate status
 node .\bridge.mjs config show
 npm run doctor
 npm run check
@@ -24,6 +25,8 @@ npm run install:codex-slash
 - `status`: inspect live Desktop-owned `opencode serve` config.
 - `state`: inspect live server, runtime files, current modes, and recent ledger
   events.
+- `orchestrate status`: inspect local orchestrator ledger/state without model
+  turns; add `--raw` only for local debugging when task text may be printed.
 - `config show`: show effective bridge config plus redacted raw local config.
 - `test:offline`: run deterministic local tests without MiniMax model turns.
 - `test:release`: run syntax check, offline tests, and `git diff --check`.

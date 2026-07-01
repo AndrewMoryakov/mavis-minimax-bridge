@@ -21,7 +21,8 @@ Always run commands from the repository root.
 
 ## Safety
 
-- Local-only commands: `doctor`, `status`, `state`, `config show`, `mode list`,
+- Local-only commands: `doctor`, `status`, `state`, `orchestrate status`,
+  `config show`, `mode list`,
   `session show`, `deny-session list`, `token-stats --ledger`, `audit`,
   `canary-estimate`, `tail`, `duet start/init/show/next/pass/note`,
   `duet packet export`, `duet step --dry-run`, `duet loop --dry-run`, and
@@ -49,6 +50,7 @@ Inspect live bridge and MiniMax routing:
 node .\bridge.mjs doctor
 node .\bridge.mjs status
 node .\bridge.mjs state
+node .\bridge.mjs orchestrate status
 node .\bridge.mjs mode list
 ```
 

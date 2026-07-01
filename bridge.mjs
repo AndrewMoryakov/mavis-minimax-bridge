@@ -11,6 +11,7 @@ import { duetLockStaleMs, withFileLock, withFileLockAsync } from "./lib/duet-loc
 import { escapeNonAscii, readJson, readJsonFromString, readJsonl, stableStringify } from "./lib/json.mjs";
 import { comparablePath, isPathInsideRoot, pathsEqual, realpathOrResolve } from "./lib/path-security.mjs";
 import { makePaths } from "./lib/paths.mjs";
+import { ambiguousTail, projectOrchState, readOrchLedger } from "./lib/orch-ledger.mjs";
 import { textDigest, textSummary } from "./lib/text-utils.mjs";
 import { makeSourceContext, readSourceSnippet } from "./lib/source-context.mjs";
 import { makeVerifier, verifierArgs, verifierEnv } from "./lib/verifier.mjs";
@@ -35,6 +36,11 @@ const {
   duetStatePath,
   duetJournalPath,
   duetLockPath,
+  orchLedgerPath,
+  orchStatePath,
+  orchJournalPath,
+  orchLockPath,
+  orchArtifactsDir,
 } = paths;
 const duetMaxEntryChars = 20000;
 const packageName = "mavis-minimax-bridge";
@@ -144,6 +150,7 @@ Safe local checks, no model tokens:
   node .\\bridge.mjs status
   node .\\bridge.mjs audit
   node .\\bridge.mjs canary-estimate
+  node .\\bridge.mjs orchestrate status
 
 When you have a MiniMax session id:
   node .\\bridge.mjs session set --session mvs_<id>
@@ -197,6 +204,7 @@ function fullUsage() {
   node .\\bridge.mjs duet verify --verifier <file.js|file.mjs|file.cjs> [--timeout-sec <n>] [--raw] [--record --agent codex|minimax] [-- <verifier-args>...]
   node .\\bridge.mjs duet pass --from codex|minimax|claude [--to codex|minimax|claude] --handoff <file> [--status running|done|human_escalation] [--force] [--raw]
   node .\\bridge.mjs duet note --agent codex|minimax|claude --note <file> [--raw]
+  node .\\bridge.mjs orchestrate status [--raw]
   node .\\bridge.mjs tail [--lines <n>] [--raw]
   node .\\bridge.mjs stop`);
 }
@@ -1683,6 +1691,11 @@ async function stateCommand() {
       duetState: runtimeFileInfo(duetStatePath),
       duetJournal: runtimeFileInfo(duetJournalPath),
       duetLock: runtimeFileInfo(duetLockPath),
+      orchLedger: runtimeFileInfo(orchLedgerPath),
+      orchState: runtimeFileInfo(orchStatePath),
+      orchJournal: runtimeFileInfo(orchJournalPath),
+      orchLock: runtimeFileInfo(orchLockPath),
+      orchArtifacts: runtimeFileInfo(orchArtifactsDir),
     },
     latestLedgerEvents: events.slice(-5).map((event) => ({
       ts: event.ts || null,
@@ -1693,6 +1706,79 @@ async function stateCommand() {
   };
   appendJsonl(ledgerPath, { event: "state", serverCount: servers.length });
   printJson(out);
+}
+
+function summarizeOrchText(value) {
+  if (typeof value !== "string" || !value) return value ?? null;
+  return textSummary(value);
+}
+
+function publicOrchDecision(decision) {
+  if (!decision || typeof decision !== "object") return decision || null;
+  const out = { ...decision };
+  for (const key of ["subtask", "summary", "reason", "note"]) {
+    if (typeof out[key] === "string") out[key] = summarizeOrchText(out[key]);
+  }
+  return out;
+}
+
+function publicOrchTail(tail) {
+  if (!tail || typeof tail !== "object") return tail || null;
+  return {
+    ...tail,
+    subtask: summarizeOrchText(tail.subtask),
+  };
+}
+
+function publicOrchState(state, raw) {
+  if (raw) return state;
+  return {
+    ...state,
+    lastDecision: publicOrchDecision(state.lastDecision),
+  };
+}
+
+function orchestrateStatusCommand(args) {
+  const raw = args.includes("--raw");
+  const unknown = args.filter((arg) => arg !== "--raw");
+  if (unknown.length) throw new Error(`unknown orchestrate status option: ${unknown[0]}`);
+  const ledger = readOrchLedger(orchLedgerPath);
+  const state = projectOrchState(ledger.events);
+  const tail = ambiguousTail(ledger.events);
+  const hasTask = ledger.events.length > 0 || fs.existsSync(orchStatePath) || fs.existsSync(orchJournalPath);
+  const integrityWarning = ledger.dropped > 0
+    ? `${ledger.dropped} malformed orch-ledger line(s) were skipped; inspect ${orchLedgerPath}`
+    : null;
+  const ambiguityWarning = tail
+    ? "latest orchestrator worker call has no recorded result; ask the human before retrying side-effecting work"
+    : null;
+  printJson({
+    event: "orchestrate-status",
+    hasTask,
+    statePath: orchStatePath,
+    ledgerPath: orchLedgerPath,
+    journalPath: orchJournalPath,
+    lockPath: orchLockPath,
+    artifactsDir: orchArtifactsDir,
+    state: publicOrchState(state, raw),
+    ledger: {
+      events: ledger.events.length,
+      dropped: ledger.dropped,
+    },
+    ambiguousTail: raw ? tail : publicOrchTail(tail),
+    warnings: [integrityWarning, ambiguityWarning].filter(Boolean),
+  });
+}
+
+function orchestrateCommand(args) {
+  const [subcommand = "status", ...rest] = args;
+  if (subcommand === "status" || subcommand === "show") return orchestrateStatusCommand(rest);
+  if (subcommand === "help" || subcommand === "--help") {
+    console.log(`Usage:
+  node .\\bridge.mjs orchestrate status [--raw]`);
+    return;
+  }
+  throw new Error(`unknown orchestrate command: ${subcommand}`);
 }
 
 function configCommand(args) {
@@ -4558,6 +4644,7 @@ async function main() {
     if (command === "mvs-messages") return await mvsMessagesCommand(args);
     if (command === "mvs-send") return await mvsSendCommand(args);
     if (command === "duet") return await duetCommand(args);
+    if (command === "orchestrate") return orchestrateCommand(args);
     if (command === "tail") return tailCommand(args);
     if (command === "stop") return await stopCommand();
     throw new Error(`unknown command: ${command}`);

@@ -20,8 +20,9 @@ Always run commands from that directory.
 
 ## Safety
 
-- `doctor`, `status`, `state`, `audit`, `token-stats`, `session show`, `mode list`, and
-  `canary-estimate` are local-only and do not intentionally start a model turn.
+- `doctor`, `status`, `state`, `orchestrate status`, `audit`, `token-stats`,
+  `session show`, `mode list`, and `canary-estimate` are local-only and do not
+  intentionally start a model turn.
 - `duet start`, `duet init`, `duet show`, `duet next`, `duet packet export`,
   `duet step --dry-run`, `duet loop --dry-run`, `duet report`, `duet pass`,
   and `duet note` are local-only coordination commands. They do not call an
@@ -53,6 +54,7 @@ Print a short command list:
 node .\bridge.mjs doctor
 node .\bridge.mjs status
 node .\bridge.mjs state
+node .\bridge.mjs orchestrate status
 node .\bridge.mjs audit
 node .\bridge.mjs token-stats --ledger
 node .\bridge.mjs mode list

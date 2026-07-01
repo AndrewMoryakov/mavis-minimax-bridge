@@ -78,6 +78,8 @@ Covered areas:
   file inputs, including no runtime-file writes on guard failure.
 - `ask --dry-run` source-context packaging for dirty Git worktrees.
 - `state` visibility for Duet runtime files.
+- `orchestrate status` local projection, malformed ledger warnings, ambiguous
+  worker-tail detection, and default redaction.
 - `.gitignore` coverage for runtime files and duet atomic temp files.
 - Installable skill and prompt surfaces documenting Duet Relay.
 - Duet acceptance harness for `examples/duet-simple-orders`, using fake agents
